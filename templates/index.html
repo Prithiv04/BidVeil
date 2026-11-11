@@ -3,330 +3,495 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BIDVEIL | Confidential Tender Evaluation</title>
+    <title>BIDVEIL | Confidential Tender Intelligence</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
   </head>
   <body>
-    <div class="shell">
-      <header class="topbar">
+    <div class="app">
+      <!-- ============ SIDEBAR ============ -->
+      <aside class="sidebar" id="sidebar">
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">BV</div>
-          <div>
-            <div class="eyebrow">Confidential procurement console</div>
-            <h1>BIDVEIL</h1>
+          <div class="brand-text">
+            <div class="brand-name">BIDVEIL</div>
+            <div class="brand-sub">Confidential procurement</div>
           </div>
         </div>
-        <div id="serviceStatus" class="status-pill status-unknown">
-          <span class="dot"></span>
-          <span id="serviceStatusText">Checking service…</span>
+
+        <nav class="side-nav" aria-label="Primary">
+          <button class="nav-item active" data-view="overview">
+            <svg viewBox="0 0 24 24" class="nav-icon"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+            <span>Overview</span>
+          </button>
+          <button class="nav-item" data-view="evaluate">
+            <svg viewBox="0 0 24 24" class="nav-icon"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zm0 9H5v-7h4v7zm10-9h-4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zm0 9h-4v-7h4v7zM13 3a4 4 0 0 0-4 4H7a6 6 0 0 1 6-6 6 6 0 0 1 6 6h-2a4 4 0 0 0-4-4z"/></svg>
+            <span>Evaluate</span>
+          </button>
+          <button class="nav-item" data-view="results">
+            <svg viewBox="0 0 24 24" class="nav-icon"><path d="M4 20V10h4v10H4zm6 0V4h4v16h-4zm6 0v-7h4v7h-4z"/></svg>
+            <span>Results</span>
+            <span id="resultsBadge" class="nav-badge" hidden></span>
+          </button>
+          <button class="nav-item" data-view="verification">
+            <svg viewBox="0 0 24 24" class="nav-icon"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+            <span>Verification</span>
+            <span id="verifyNavBadge" class="nav-badge" hidden></span>
+          </button>
+          <button class="nav-item" data-view="history">
+            <svg viewBox="0 0 24 24" class="nav-icon"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 2.05 4.95L6.7 18.3A9 9 0 1 0 13 3zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+            <span>History</span>
+          </button>
+          <button class="nav-item" data-view="privacy">
+            <svg viewBox="0 0 24 24" class="nav-icon"><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm-3 8V6a3 3 0 1 1 6 0v3H9zm3 3a2 2 0 0 1 1 3.73V19a1 1 0 0 1-2 0v-4.27A2 2 0 0 1 12 12z"/></svg>
+            <span>Privacy</span>
+          </button>
+          <button class="nav-item" data-view="about">
+            <svg viewBox="0 0 24 24" class="nav-icon"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+            <span>About</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div id="serviceStatus" class="status-pill status-unknown">
+            <span class="dot"></span>
+            <span id="serviceStatusText">Checking service…</span>
+          </div>
         </div>
-      </header>
+      </aside>
+      <div class="sidebar-scrim" id="sidebarScrim"></div>
 
-      <nav class="tabs" aria-label="Primary">
-        <button class="tab active" data-tab="overview">Overview</button>
-        <button class="tab" data-tab="evaluate">Evaluate</button>
-        <button class="tab" data-tab="verification">Verification</button>
-        <button class="tab" data-tab="history">History</button>
-        <button class="tab" data-tab="privacy">Privacy</button>
-        <button class="tab" data-tab="about">About</button>
-      </nav>
+      <!-- ============ MAIN ============ -->
+      <div class="main">
+        <header class="topbar">
+          <button class="icon-btn menu-btn" id="menuBtn" aria-label="Toggle navigation">
+            <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>
+          </button>
+          <div class="topbar-titles">
+            <h1 id="pageTitle">Overview</h1>
+            <p id="pageSubtitle">Command centre for confidential tender evaluation</p>
+          </div>
+          <div class="topbar-right">
+            <span class="env-tag">AI-assisted decision support</span>
+          </div>
+        </header>
 
-      <main>
-        <!-- OVERVIEW -->
-        <section id="tab-overview" class="tab-panel active">
-          <div class="panel">
-            <div class="section-title">
-              <h2>Service status</h2>
-              <span class="section-note">Live data from /api/health</span>
+        <main class="content">
+          <!-- ================= OVERVIEW ================= -->
+          <section class="view active" id="view-overview">
+            <div class="hero card">
+              <div class="hero-text">
+                <div class="eyebrow">Confidential procurement intelligence</div>
+                <h2>Evaluate tenders with verifiable AI</h2>
+                <p>BIDVEIL extracts evidence from bid documents, scores vendors against your criteria, and cryptographically verifies every inference through the NEAR AI Cloud TEE pipeline. Nothing is persisted.</p>
+                <div class="hero-actions">
+                  <button class="btn btn-primary" id="ctaEvaluate">New evaluation</button>
+                  <button class="btn btn-ghost" id="ctaDemo">Load demo tender</button>
+                  <button class="btn btn-ghost" id="ctaVerify">Verification centre</button>
+                </div>
+              </div>
+              <div class="hero-visual" aria-hidden="true">
+                <div class="shield-ring"><div class="shield-core">BV</div></div>
+              </div>
             </div>
+
             <div class="stat-grid">
-              <div class="stat-card">
+              <div class="stat-card skeleton-card" id="hcApi">
                 <label>API status</label>
                 <strong id="ovApiStatus">—</strong>
+                <span class="stat-hint" id="ovApiHint">Checking…</span>
               </div>
-              <div class="stat-card">
+              <div class="stat-card skeleton-card" id="hcTee">
                 <label>NEAR AI Cloud</label>
                 <strong id="ovTeeMode">—</strong>
+                <span class="stat-hint" id="ovTeeHint">Checking…</span>
               </div>
-              <div class="stat-card">
+              <div class="stat-card skeleton-card" id="hcModel">
                 <label>Inference model</label>
                 <strong id="ovModel" class="mono">—</strong>
+                <span class="stat-hint">Resolved per evaluation</span>
               </div>
-              <div class="stat-card">
+              <div class="stat-card skeleton-card" id="hcStates">
                 <label>Verification states</label>
                 <strong id="ovStates">—</strong>
+                <span class="stat-hint">Defined by backend</span>
               </div>
             </div>
-            <p id="ovHealthNote" class="section-note"></p>
-          </div>
 
-          <div class="panel">
-            <div class="section-title">
-              <h2>Session activity</h2>
-              <span class="section-note">This browser session only — BIDVEIL does not persist evaluations</span>
+            <div class="grid-2">
+              <div class="card">
+                <div class="card-head">
+                  <h3>Session activity</h3>
+                  <span class="card-note">This browser session only</span>
+                </div>
+                <div class="mini-stats">
+                  <div class="mini-stat"><label>Evaluations run</label><strong id="ssCount">0</strong></div>
+                  <div class="mini-stat"><label>Last verification</label><strong id="ssLastState" class="mono">—</strong></div>
+                  <div class="mini-stat"><label>Last winner</label><strong id="ssLastWinner">—</strong></div>
+                </div>
+                <div id="sessionActivity" class="activity-list">
+                  <div class="empty-state">
+                    <p>No evaluations yet this session.</p>
+                    <button class="btn btn-sm btn-primary" id="ctaEvaluate2">Start your first evaluation</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head"><h3>Procurement workflow</h3><span class="card-note">How an evaluation flows</span></div>
+                <ol class="flow-steps">
+                  <li><span class="flow-num">1</span><div><strong>Submit tender &amp; bids</strong><p>Tender criteria plus vendor proposals and PDF/TXT documents.</p></div></li>
+                  <li><span class="flow-num">2</span><div><strong>Ephemeral extraction</strong><p>Text is extracted in a request-scoped temp directory, then deleted.</p></div></li>
+                  <li><span class="flow-num">3</span><div><strong>Verified inference</strong><p>NEAR AI Cloud runs the model inside a TEE with nonce-bound attestation.</p></div></li>
+                  <li><span class="flow-num">4</span><div><strong>Deterministic scoring</strong><p>Evidence is scored by fixed weights — the AI never picks a winner.</p></div></li>
+                  <li><span class="flow-num">5</span><div><strong>Verifiable report</strong><p>Cryptographic evidence travels with every result.</p></div></li>
+                </ol>
+              </div>
             </div>
-            <div class="stat-grid stat-grid-3">
-              <div class="stat-card"><label>Evaluations run</label><strong id="ssCount">0</strong></div>
-              <div class="stat-card"><label>Last verification state</label><strong id="ssLastState" class="mono">—</strong></div>
-              <div class="stat-card"><label>Last winner</label><strong id="ssLastWinner">—</strong></div>
+
+            <div class="card">
+              <div class="card-head"><h3>Verification availability</h3></div>
+              <p class="prose">
+                BIDVEIL performs cryptographic verification through the official NEAR AI Inference SDK.
+                A <strong>gateway signature</strong> proves the response passed through the verified NEAR AI gateway.
+                A <strong>provider_tee signature</strong> additionally proves the model executed inside a Trusted Execution Environment.
+                BIDVEIL never displays <span class="mono">MODEL_TEE_VERIFIED</span> unless the backend returns that state.
+              </p>
+              <p class="prose muted" id="ovVerificationNote"></p>
             </div>
-            <div id="sessionActivity" class="activity-list">
-              <p class="empty-state">No evaluations have been run in this session.</p>
+          </section>
+
+          <!-- ================= EVALUATE ================= -->
+          <section class="view" id="view-evaluate">
+            <div class="eval-layout">
+              <div class="eval-main">
+                <div class="card">
+                  <div class="card-head">
+                    <h3>Tender configuration</h3>
+                    <button id="loadDemo" class="btn btn-sm btn-ghost" type="button">Load demo data</button>
+                  </div>
+
+                  <div class="field-grid">
+                    <div class="field-group span-2">
+                      <label for="tenderTitle">Tender title</label>
+                      <input id="tenderTitle" placeholder="e.g. Secure government data platform" />
+                    </div>
+                    <div class="field-group span-2">
+                      <label for="tenderDescription">Tender description</label>
+                      <textarea id="tenderDescription" rows="3" placeholder="Scope, objectives, confidentiality obligations…"></textarea>
+                    </div>
+                    <div class="field-group">
+                      <label for="maximumBudget">Maximum budget</label>
+                      <input id="maximumBudget" type="number" min="0" placeholder="1000000" />
+                    </div>
+                    <div class="field-group">
+                      <label for="submissionDeadline">Submission deadline</label>
+                      <input id="submissionDeadline" type="date" />
+                    </div>
+                    <div class="field-group span-2">
+                      <label for="eligibilityRequirements">Eligibility requirements</label>
+                      <textarea id="eligibilityRequirements" rows="2" placeholder="Mandatory qualifications, certifications, experience…"></textarea>
+                    </div>
+                    <div class="field-group span-2">
+                      <label for="technicalRequirements">Technical requirements</label>
+                      <textarea id="technicalRequirements" rows="2" placeholder="Functional and non-functional requirements…"></textarea>
+                    </div>
+                    <div class="field-group span-2">
+                      <label for="evaluationCriteria">Evaluation criteria</label>
+                      <textarea id="evaluationCriteria" rows="2" placeholder="Criteria used for scoring…"></textarea>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-head">
+                    <h3>Bidders</h3>
+                    <span class="card-note">PDF / TXT · 10 MB each · 10 files per vendor · 20 vendors max</span>
+                  </div>
+                  <div id="formErrors" class="form-errors" hidden></div>
+                  <div id="vendorList" class="vendor-list"></div>
+                  <button id="addVendor" class="btn btn-sm btn-secondary" type="button">+ Add bidder</button>
+                </div>
+              </div>
+
+              <aside class="eval-side">
+                <div class="card sticky-card">
+                  <div class="card-head"><h3>Evaluation readiness</h3></div>
+                  <div class="readiness-list">
+                    <div class="readiness-row"><span>Bidders</span><strong id="rdVendors">0</strong></div>
+                    <div class="readiness-row"><span>Documents queued</span><strong id="rdDocs">0</strong></div>
+                    <div class="readiness-row"><span>Total upload size</span><strong id="rdSize">0 MB</strong></div>
+                    <div class="readiness-row"><span>Scoring weights</span><strong class="mono">5 criteria</strong></div>
+                  </div>
+                  <div id="progressPanel" class="progress-panel" hidden>
+                    <div class="progress-steps" id="progressSteps"></div>
+                    <ul id="processingDetails" class="log-list"></ul>
+                  </div>
+                  <button id="evaluateButton" class="btn btn-primary btn-block" type="button">Run evaluation</button>
+                  <p class="fine-print">Documents are processed ephemerally and deleted after the request. AI output is decision support, not a binding award.</p>
+                </div>
+              </aside>
             </div>
-          </div>
+          </section>
 
-          <div class="panel">
-            <div class="section-title"><h2>Verification availability</h2></div>
-            <p class="prose">
-              BIDVEIL performs cryptographic verification through the official NEAR AI Inference SDK.
-              A <strong>gateway signature</strong> proves the response passed through the verified NEAR AI gateway.
-              A <strong>provider_tee signature</strong> additionally proves the model executed inside a Trusted Execution Environment.
-              BIDVEIL never displays <span class="mono">MODEL_TEE_VERIFIED</span> unless the backend returns that state.
-            </p>
-            <p class="prose muted" id="ovVerificationNote"></p>
-          </div>
-        </section>
+          <!-- ================= RESULTS ================= -->
+          <section class="view" id="view-results">
+            <div id="resultsEmpty" class="card empty-hero">
+              <div class="empty-hero-icon">◔</div>
+              <h3>No evaluation results yet</h3>
+              <p>Run an evaluation and the winning bidder, score breakdown, risk analysis and verification evidence will appear here.</p>
+              <button class="btn btn-primary" id="ctaEvaluate3">Go to Evaluate</button>
+            </div>
 
-        <!-- EVALUATE -->
-        <section id="tab-evaluate" class="tab-panel">
-          <div class="layout">
-            <section class="panel">
-              <div class="section-title">
-                <h2>Tender configuration</h2>
-                <button id="loadDemo" class="ghost" type="button">Load demo</button>
-              </div>
-
-              <div class="field-group">
-                <label for="tenderTitle">Tender title</label>
-                <input id="tenderTitle" value="Modern Secure Government Data Platform" />
-              </div>
-
-              <div class="field-group">
-                <label for="tenderDescription">Tender description</label>
-                <textarea id="tenderDescription">Procurement for a resilient government data platform with secure integration, confidentiality obligations, and modernization of legacy datasets.</textarea>
-              </div>
-
-              <div class="two-col">
-                <div class="field-group">
-                  <label for="maximumBudget">Maximum budget</label>
-                  <input id="maximumBudget" type="number" value="1000000" />
-                </div>
-                <div class="field-group">
-                  <label for="submissionDeadline">Submission deadline</label>
-                  <input id="submissionDeadline" value="2026-12-31" type="date" />
+            <div id="resultsContent" hidden>
+              <div class="winner-hero card">
+                <div class="winner-badge">Recommended awardee</div>
+                <h2 id="winnerName">—</h2>
+                <p class="winner-sub" id="winnerSub">—</p>
+                <div class="winner-meta">
+                  <span class="chip" id="winnerScoreChip">—</span>
+                  <span class="chip chip-ghost" id="winnerPriceChip">—</span>
+                  <span class="chip chip-ghost" id="winnerVerifyChip">—</span>
                 </div>
               </div>
 
-              <div class="field-group">
-                <label for="eligibilityRequirements">Eligibility requirements</label>
-                <textarea id="eligibilityRequirements">Qualified bidders must have province-wide experience in secure government modernization, SOC 2 or equivalent controls, and at least three comparable deployments.</textarea>
+              <div class="stat-grid stat-grid-4">
+                <div class="stat-card"><label>Average score</label><strong id="averageScore">—</strong></div>
+                <div class="stat-card"><label>Bidders evaluated</label><strong id="vendorCount">—</strong></div>
+                <div class="stat-card"><label>Model</label><strong id="modelName" class="mono">—</strong></div>
+                <div class="stat-card"><label>Verification</label><strong id="resultVerifyState" class="mono">—</strong></div>
               </div>
 
-              <div class="field-group">
-                <label for="technicalRequirements">Technical requirements</label>
-                <textarea id="technicalRequirements">Deliver secure integration, data migration, role-based access, auditability, performance monitoring, and phased rollout with minimal operational risk.</textarea>
-              </div>
-
-              <div class="field-group">
-                <label for="evaluationCriteria">Evaluation criteria</label>
-                <textarea id="evaluationCriteria">Technical compliance, price competitiveness, relevant experience, delivery timeline, eligibility and documentation.</textarea>
-              </div>
-
-              <div class="section-subtitle">Bidders</div>
-              <p class="responsive-note upload-guidance">PDF and UTF-8 TXT only · 10 MB per document · 10 documents per vendor · 20 vendors maximum · 50 MB per request.</p>
-              <div id="formErrors" class="form-errors" hidden></div>
-              <div id="vendorList" class="vendor-list"></div>
-
-              <div class="actions">
-                <button id="addVendor" class="secondary" type="button">Add vendor</button>
-                <button id="evaluateButton" class="primary" type="button">Evaluate bids</button>
-              </div>
-            </section>
-
-            <section class="panel results-panel">
-              <div class="section-title">
-                <h2>Results</h2>
-                <button id="retryButton" class="ghost" type="button" hidden>Retry evaluation</button>
-              </div>
-
-              <div id="resultsSummary" class="summary-grid">
-                <div class="stat-card">
-                  <label>Winner</label>
-                  <strong id="winnerName">—</strong>
+              <div class="grid-2">
+                <div class="card">
+                  <div class="card-head"><h3>Weighted score comparison</h3><span class="card-note">Deterministic backend scoring</span></div>
+                  <div id="scoreChart" class="chart-wrap"></div>
                 </div>
-                <div class="stat-card">
-                  <label>Average score</label>
-                  <strong id="averageScore">—</strong>
-                </div>
-                <div class="stat-card">
-                  <label>Model</label>
-                  <strong id="modelName" class="mono">—</strong>
+                <div class="card">
+                  <div class="card-head"><h3>Evaluation criteria</h3><span class="card-note">Fixed weights</span></div>
+                  <div id="criteriaChart" class="chart-wrap"></div>
+                  <div class="weight-legend" id="weightLegend"></div>
                 </div>
               </div>
 
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Rank</th>
-                      <th>Vendor</th>
-                      <th>Score</th>
-                      <th>Price</th>
-                      <th>Risk</th>
-                    </tr>
-                  </thead>
-                  <tbody id="rankingsBody">
-                    <tr><td colspan="5" class="empty-cell">No evaluation results yet.</td></tr>
-                  </tbody>
-                </table>
+              <div class="card">
+                <div class="card-head">
+                  <h3>Bidder comparison</h3>
+                  <button class="btn btn-sm btn-ghost" id="downloadReport" type="button">Download report</button>
+                </div>
+                <div class="table-wrap">
+                  <table class="data-table">
+                    <thead>
+                      <tr><th>Rank</th><th>Bidder</th><th class="col-score">Weighted score</th><th>Quoted price</th><th>Risk</th></tr>
+                    </thead>
+                    <tbody id="rankingsBody"></tbody>
+                  </table>
+                </div>
               </div>
 
-              <div class="detail-panel">
-                <h3>Detailed evidence</h3>
-                <div id="vendorDetails" class="vendor-details">
-                  <p class="empty-state">Run an evaluation to see per-vendor evidence, strengths, weaknesses, and risk indicators.</p>
+              <div class="grid-2">
+                <div class="card">
+                  <div class="card-head"><h3>Recommendation rationale</h3></div>
+                  <div id="rationaleBox" class="rationale-box"></div>
                 </div>
+                <div class="card">
+                  <div class="card-head"><h3>Risk indicators</h3></div>
+                  <div id="riskPanel" class="risk-panel"></div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head"><h3>Evidence detail</h3><span class="card-note">Per-bidder extracted evidence</span></div>
+                <div id="vendorDetails" class="vendor-details"></div>
               </div>
               <p class="decision-disclaimer">AI-assisted decision support only. Evaluation scores are not an automatic or legally binding procurement decision.</p>
-            </section>
-          </div>
-        </section>
+            </div>
+          </section>
 
-        <!-- VERIFICATION -->
-        <section id="tab-verification" class="tab-panel">
-          <div class="layout">
-            <section class="panel">
-              <div class="verification-box" id="verificationCenter">
-                <div class="verification-header">
-                  <span>Verification Center</span>
-                  <span id="verificationBadge" class="badge neutral">WAITING</span>
+          <!-- ================= VERIFICATION ================= -->
+          <section class="view" id="view-verification">
+            <div class="verify-hero card" id="verifyHero">
+              <div class="verify-hero-left">
+                <div class="eyebrow">Cryptographic verification</div>
+                <div class="verify-state-row">
+                  <span id="verificationBadge" class="badge badge-lg neutral">WAITING</span>
+                  <span id="verificationMode" class="chip chip-ghost">mode: —</span>
                 </div>
                 <p id="verificationExplanation" class="prose"></p>
-                <ul id="verificationDetails" class="verification-list">
-                  <li>Verification status: WAITING</li>
-                </ul>
+              </div>
+            </div>
+
+            <div class="stat-grid stat-grid-3">
+              <div class="stat-card verify-stat" id="vsGateway">
+                <label>Gateway signature</label>
+                <strong id="vsGatewayState">Not performed</strong>
+                <span class="stat-hint">SDK-verified gateway signature</span>
+              </div>
+              <div class="stat-card verify-stat" id="vsModel">
+                <label>Model TEE execution</label>
+                <strong id="vsModelState">Not performed</strong>
+                <span class="stat-hint">provider_tee signature required</span>
+              </div>
+              <div class="stat-card verify-stat" id="vsAttestation">
+                <label>Attestation</label>
+                <strong id="vsAttestationState">Not performed</strong>
+                <span class="stat-hint">Nonce-bound report + SDK verify</span>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="card">
+                <div class="card-head"><h3>Verification lifecycle</h3><span class="card-note">Official SDK order</span></div>
+                <ol class="timeline" id="verifyTimeline">
+                  <li data-step="nonce"><span class="tl-dot"></span><div><strong>Fresh nonce generated</strong><p>32-byte per-request nonce prevents replay of stale attestation evidence.</p></div></li>
+                  <li data-step="attestation"><span class="tl-dot"></span><div><strong>Attestation report fetched</strong><p>Live report retrieved from NEAR AI Cloud for the resolved TEE model.</p></div></li>
+                  <li data-step="noncebind"><span class="tl-dot"></span><div><strong>Nonce binding verified</strong><p>Gateway, model and NVIDIA payload attestations must echo the session nonce.</p></div></li>
+                  <li data-step="sdkverify"><span class="tl-dot"></span><div><strong>SDK attestation verified</strong><p>Official InferenceClient.verify() validates the attestation chain.</p></div></li>
+                  <li data-step="inference"><span class="tl-dot"></span><div><strong>Inference executed</strong><p>Chat completion runs on the verified model; request/response retained.</p></div></li>
+                  <li data-step="signature"><span class="tl-dot"></span><div><strong>Response signature verified</strong><p>verify_response() checks signature kind and signed payload hashes.</p></div></li>
+                  <li data-step="result"><span class="tl-dot"></span><div><strong>Result delivered</strong><p>Verification object attached to the evaluation response.</p></div></li>
+                </ol>
               </div>
 
-              <div class="panel-inner">
-                <h3>What is cryptographically verified</h3>
+              <div class="card">
+                <div class="card-head"><h3>Evidence details</h3></div>
+                <dl class="detail-grid" id="verificationDetails"></dl>
+                <div id="verificationUnavailable" class="notice notice-warning" hidden>
+                  <strong>Verification unavailable or failed.</strong>
+                  <span id="verificationUnavailableText"></span>
+                  The evaluation cannot proceed without a verified inference response. Check the NEAR AI Cloud account billing/spending limit configuration, then retry.
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head"><h3>Processing log</h3></div>
+              <ul id="processingDetails" class="log-list"><li>Waiting for evaluation…</li></ul>
+            </div>
+          </section>
+
+          <!-- ================= HISTORY ================= -->
+          <section class="view" id="view-history">
+            <div class="card">
+              <div class="card-head">
+                <h3>Evaluation history</h3>
+                <div class="history-tools">
+                  <input id="historySearch" class="input-sm" type="search" placeholder="Search tender or winner…" />
+                  <select id="historyFilter" class="input-sm">
+                    <option value="">All states</option>
+                    <option value="MODEL_TEE_VERIFIED">MODEL_TEE_VERIFIED</option>
+                    <option value="GATEWAY_ONLY">GATEWAY_ONLY</option>
+                    <option value="VERIFICATION_FAILED">VERIFICATION_FAILED</option>
+                    <option value="VERIFICATION_UNAVAILABLE">VERIFICATION_UNAVAILABLE</option>
+                  </select>
+                  <button id="historyClear" class="btn btn-sm btn-ghost" type="button">Clear session</button>
+                </div>
+              </div>
+              <p class="prose muted">
+                BIDVEIL does not persist evaluations, bids, prompts, or model responses.
+                Records below exist only in this browser session and are cleared on refresh or when you clear them.
+              </p>
+              <div id="historyList" class="activity-list">
+                <div class="empty-state"><p>No evaluations recorded yet this session.</p></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ================= PRIVACY ================= -->
+          <section class="view" id="view-privacy">
+            <div class="card">
+              <div class="card-head"><h3>Data lifecycle</h3><span class="card-note">What happens to a document</span></div>
+              <div class="lifecycle">
+                <div class="lc-step"><span class="lc-num">1</span><h4>Upload</h4><p>Bid documents are sent over HTTPS to BIDVEIL for this evaluation only.</p></div>
+                <div class="lc-arrow">→</div>
+                <div class="lc-step"><span class="lc-num">2</span><h4>Temporary processing</h4><p>Files land in a unique request-scoped temp directory (<span class="mono">bidveil-*</span>); text is extracted in memory.</p></div>
+                <div class="lc-arrow">→</div>
+                <div class="lc-step"><span class="lc-num">3</span><h4>Private inference</h4><p>Extracted text is sent to NEAR AI Cloud for analysis inside a verified TEE. BIDVEIL cannot control provider retention.</p></div>
+                <div class="lc-arrow">→</div>
+                <div class="lc-step"><span class="lc-num">4</span><h4>Verification</h4><p>A fresh nonce binds the attestation report; SDK checks signatures and hashes.</p></div>
+                <div class="lc-arrow">→</div>
+                <div class="lc-step"><span class="lc-num">5</span><h4>Cleanup</h4><p>The temp directory is removed on success <em>and</em> every failure path; upload streams are closed.</p></div>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="card">
+                <div class="card-head"><h3>What BIDVEIL does</h3></div>
                 <ul class="check-list">
-                  <li><strong>Attestation report</strong> — fetched live from NEAR AI Cloud and bound to a fresh per-request nonce.</li>
-                  <li><strong>SDK attestation</strong> — verified by the official NEAR AI Inference SDK (<span class="mono">client.verify</span>).</li>
-                  <li><strong>Response signature</strong> — verified by the SDK (<span class="mono">client.verify_response</span>) against the retained request and response bytes.</li>
-                  <li><strong>Signed payload</strong> — parsed and model-id bound by BIDVEIL as a secondary check.</li>
-                </ul>
-                <p class="prose muted">
-                  If the provider returns a gateway signature, BIDVEIL reports <span class="mono">GATEWAY_ONLY</span>.
-                  Model-level TEE execution is claimed only for <span class="mono">provider_tee</span> signatures.
-                </p>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="section-title"><h2>Processing status</h2></div>
-              <div class="processing-status">
-                <ul id="processingDetails" class="verification-list">
-                  <li>Waiting for upload</li>
+                  <li>Validates file type, size and structure before processing.</li>
+                  <li>Extracts text ephemerally — originals are never stored.</li>
+                  <li>Sends bid text to NEAR AI Cloud only for the active evaluation.</li>
+                  <li>Generates a fresh 32-byte nonce per evaluation (replay protection).</li>
+                  <li>Deletes temporary files after the request, including failures.</li>
+                  <li>Does not intentionally persist uploads, prompts, or responses; does not log tender content.</li>
                 </ul>
               </div>
-              <div id="verificationUnavailable" class="notice notice-warning" hidden>
-                <strong>Verification unavailable.</strong>
-                <span id="verificationUnavailableText"></span>
-                The evaluation cannot proceed without a verified inference response. Check the NEAR AI Cloud account billing/spending limit configuration, then retry.
+              <div class="card">
+                <div class="card-head"><h3>Limitations — read before use</h3></div>
+                <ul class="check-list warn-list">
+                  <li>BIDVEIL cannot guarantee physical memory erasure.</li>
+                  <li>NEAR AI Cloud's retention and logging policies are outside BIDVEIL's control.</li>
+                  <li>Verification proves inference integrity, not data privacy at the provider.</li>
+                  <li>Do not submit information unless the provider's terms are acceptable to your organisation.</li>
+                  <li>Cleanup is confirmed per-request in the processing log; check it after each run.</li>
+                </ul>
               </div>
-            </section>
-          </div>
-        </section>
-
-        <!-- HISTORY -->
-        <section id="tab-history" class="tab-panel">
-          <div class="panel">
-            <div class="section-title">
-              <h2>Evaluation history</h2>
-              <span class="section-note">Session records only</span>
             </div>
-            <p class="prose">
-              BIDVEIL does not persist evaluations, bids, prompts, or model responses.
-              The list below shows evaluations completed in this browser session and is cleared when the page is closed.
-            </p>
-            <div id="historyList" class="activity-list">
-              <p class="empty-state">No evaluations recorded yet. Completed evaluations will appear here for this session only.</p>
+          </section>
+
+          <!-- ================= ABOUT ================= -->
+          <section class="view" id="view-about">
+            <div class="card">
+              <div class="card-head"><h3>Architecture</h3><span class="card-note">End-to-end flow</span></div>
+              <div class="arch-flow">
+                <div class="arch-node"><span class="arch-num">1</span><strong>Document submission</strong><p>Browser uploads tender config + bid files via multipart POST.</p><code>/api/evaluate/stream</code></div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-node"><span class="arch-num">2</span><strong>Secure processing</strong><p>Flask validates, extracts text into a request-scoped temp dir.</p><code>app.py · pypdf</code></div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-node"><span class="arch-num">3</span><strong>NEAR AI Cloud inference</strong><p>TEE model resolution, attestation report, nonce binding, chat completion.</p><code>near_ai.py · nearai-inference-sdk</code></div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-node"><span class="arch-num">4</span><strong>Cryptographic verification</strong><p>SDK verify + verify_response; signature kind classified honestly.</p><code>ed25519 · e2ee</code></div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-node"><span class="arch-num">5</span><strong>Evaluation result</strong><p>Deterministic weighted scoring; SSE stream delivers progress + result.</p><code>Flask SSE</code></div>
+              </div>
             </div>
-          </div>
-        </section>
 
-        <!-- PRIVACY -->
-        <section id="tab-privacy" class="tab-panel">
-          <div class="panel">
-            <div class="section-title"><h2>Privacy &amp; data handling</h2></div>
-            <ol class="privacy-steps">
-              <li>Documents are uploaded to BIDVEIL for this evaluation only.</li>
-              <li>Readable text is extracted in request-scoped processing; originals are never stored.</li>
-              <li>Bid text is sent to NEAR AI Cloud for analysis — BIDVEIL cannot control the provider's retention or logging practices.</li>
-              <li>Each evaluation uses a fresh cryptographic nonce; attestation reports must echo it, preventing replay of stale evidence.</li>
-              <li>Model TEE verification is shown only after the official SDK validates a <span class="mono">provider_tee</span> signature. A gateway signature is never treated as model TEE proof.</li>
-              <li>Temporary server-side files are removed after the request, including failures.</li>
-              <li>BIDVEIL does not intentionally persist uploaded files, extracted bid text, prompts, or model responses, and does not log tender content.</li>
-            </ol>
-            <p class="privacy-disclaimer">
-              BIDVEIL cannot guarantee physical memory erasure or control NEAR AI Cloud's retention policies.
-              Do not send information unless the service's terms are acceptable to your organization.
-            </p>
-          </div>
-        </section>
+            <div class="grid-2">
+              <div class="card">
+                <div class="card-head"><h3>Technology stack</h3></div>
+                <div class="chip-cloud">
+                  <span class="chip">Flask</span><span class="chip">Python 3</span><span class="chip">nearai-inference-sdk</span>
+                  <span class="chip">OpenAI-compatible client</span><span class="chip">httpx</span><span class="chip">pypdf</span>
+                  <span class="chip">Vanilla JS</span><span class="chip">Server-Sent Events</span><span class="chip">ed25519 signatures</span>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-head"><h3>Verification states</h3></div>
+                <ul class="state-grid">
+                  <li><span class="mono">WAITING</span> — no verification yet</li>
+                  <li><span class="mono">ATTESTATION_PENDING</span> — report requested</li>
+                  <li><span class="mono">ATTESTATION_VERIFIED</span> — report nonce-bound</li>
+                  <li><span class="mono">SIGNATURE_VERIFIED</span> — response signature verified</li>
+                  <li><span class="mono">MODEL_TEE_VERIFIED</span> — provider_tee signature verified</li>
+                  <li><span class="mono">GATEWAY_ONLY</span> — gateway signature only</li>
+                  <li><span class="mono">VERIFICATION_FAILED</span> — a check failed</li>
+                  <li><span class="mono">VERIFICATION_UNAVAILABLE</span> — could not verify</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+        </main>
 
-        <!-- ABOUT -->
-        <section id="tab-about" class="tab-panel">
-          <div class="panel">
-            <div class="section-title"><h2>Architecture</h2></div>
-            <pre class="arch-diagram">Browser (this console)
-   |  multipart POST /api/evaluate/stream  (SSE progress events)
-   v
-app.py  process_evaluation()
-   |-- validate uploads (extension, MIME, size, PDF structure, UTF-8)
-   |-- write to unique request-scoped TemporaryDirectory (bidveil-*)
-   |-- extract text (pypdf / UTF-8 decode) -&gt; in-memory only
-   |-- generate fresh 32-byte nonce (hex)
-   |-- build evaluation prompt (tender + extracted bid text + nonce)
-   v
-near_ai.py  run_verified_inference()   [official order]
-   |-- resolve_tee_model(): GET /v1/models + attestation metadata
-   |     (requires attestation_supported + provider_type=vllm)
-   |-- GET /v1/attestation/report?...&amp;nonce=
-   |-- verify_attestation_nonce(): gateway + model + nvidia_payload binding
-   |-- InferenceClient(e2ee=True, signing_algo=ed25519, ttl=0)
-   |     .verify(model)           -&gt; SDK attestation verification
-   |     .chat.completions.create -&gt; real inference
-   |     .verify_response(id)     -&gt; SDK signature + request/response hash check
-   v
-Verification object -&gt; deterministic weighted scoring -&gt; SSE result
-   |
-   +-- TemporaryDirectory removed on success AND every failure path
-   +-- upload streams closed; extracted text never persisted</pre>
-          </div>
-          <div class="panel">
-            <div class="section-title"><h2>Verification states</h2></div>
-            <ul class="state-list">
-              <li><span class="mono">WAITING</span> — no verification performed yet.</li>
-              <li><span class="mono">ATTESTATION_PENDING</span> — attestation report requested.</li>
-              <li><span class="mono">ATTESTATION_VERIFIED</span> — report fetched and nonce-bound.</li>
-              <li><span class="mono">SIGNATURE_VERIFIED</span> — response signature verified by the SDK.</li>
-              <li><span class="mono">MODEL_TEE_VERIFIED</span> — provider_tee signature verified; model executed in a TEE.</li>
-              <li><span class="mono">GATEWAY_ONLY</span> — gateway signature verified; model TEE execution not proven.</li>
-              <li><span class="mono">VERIFICATION_FAILED</span> — a cryptographic check failed.</li>
-              <li><span class="mono">VERIFICATION_UNAVAILABLE</span> — verification could not be performed (e.g. provider billing/connectivity).</li>
-            </ul>
-          </div>
-        </section>
-      </main>
-
-      <footer class="footer">
-        <span>BIDVEIL — AI-assisted decision support only. Scores are not an automatic or legally binding procurement decision.</span>
-      </footer>
+        <footer class="footer">
+          <span>BIDVEIL — AI-assisted decision support only. Scores are not an automatic or legally binding procurement decision.</span>
+        </footer>
+      </div>
     </div>
+
+    <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+    <div id="modalRoot"></div>
 
     <script src="{{ url_for('static', filename='app.js') }}"></script>
   </body>

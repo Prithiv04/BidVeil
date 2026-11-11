@@ -6,15 +6,53 @@ const defaultWeights = {
   eligibility_and_documentation: 0.1,
 };
 
+const WEIGHT_LABELS = {
+  technical_compliance: 'Technical compliance',
+  price_competitiveness: 'Price competitiveness',
+  relevant_experience: 'Relevant experience',
+  delivery_timeline: 'Delivery timeline',
+  eligibility_and_documentation: 'Eligibility & documentation',
+};
+
+const CRITERIA_KEYS = [
+  ['technicalComplianceScore', 'Technical'],
+  ['priceCompetitivenessScore', 'Price'],
+  ['relevantExperienceScore', 'Experience'],
+  ['deliveryTimelineScore', 'Delivery'],
+  ['eligibilityDocumentationScore', 'Eligibility'],
+];
+
 const LIMITS = {
   maxFileBytes: 10 * 1024 * 1024,
   maxFilesPerVendor: 10,
   maxVendors: 20,
+  maxRequestBytes: 50 * 1024 * 1024,
   allowedExtensions: ['.pdf', '.txt'],
+};
+
+const PROGRESS_STEPS = [
+  { key: 'extracting', label: 'Extract documents' },
+  { key: 'preparing', label: 'Prepare analysis' },
+  { key: 'verifying', label: 'Verify inference' },
+  { key: 'evaluation_completed', label: 'Score & rank' },
+  { key: 'cleanup_completed', label: 'Cleanup' },
+];
+
+const VIEW_META = {
+  overview: ['Overview', 'Command centre for confidential tender evaluation'],
+  evaluate: ['Evaluate', 'Configure a tender and submit bids for verified AI evaluation'],
+  results: ['Results', 'Winning bidder, score breakdown and evidence'],
+  verification: ['Verification', 'Cryptographic evidence for the latest inference'],
+  history: ['History', 'Session-only evaluation records'],
+  privacy: ['Privacy', 'How BIDVEIL handles your documents'],
+  about: ['About', 'Architecture and technology'],
 };
 
 const sessionEvaluations = [];
 let lastPayload = null;
+let lastResult = null;
+let currentView = 'overview';
+let evaluating = false;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
   '&': '&amp;',
@@ -25,70 +63,218 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character
 }[character]));
 
 const el = (id) => document.getElementById(id);
+const fmtBytes = (bytes) => {
+  if (!bytes) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+};
 
-/* ---------- Tabs ---------- */
+/* ================= Toasts & modal ================= */
 
-const switchTab = (name) => {
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.classList.toggle('active', tab.dataset.tab === name);
-  });
-  document.querySelectorAll('.tab-panel').forEach((panel) => {
-    panel.classList.toggle('active', panel.id === `tab-${name}`);
+const toast = (message, type = 'info') => {
+  const root = el('toastRoot');
+  const node = document.createElement('div');
+  node.className = `toast ${type}`;
+  node.textContent = message;
+  root.appendChild(node);
+  setTimeout(() => {
+    node.classList.add('out');
+    setTimeout(() => node.remove(), 350);
+  }, 4200);
+};
+
+const openModal = (title, bodyHtml) => {
+  const root = el('modalRoot');
+  root.innerHTML = `
+    <div class="modal-scrim" id="modalScrim">
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-head"><h3>${escapeHtml(title)}</h3>
+          <button class="icon-btn" id="modalClose" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body">${bodyHtml}</div>
+      </div>
+    </div>`;
+  const close = () => { root.innerHTML = ''; };
+  el('modalClose').addEventListener('click', close);
+  el('modalScrim').addEventListener('click', (event) => { if (event.target.id === 'modalScrim') close(); });
+  document.addEventListener('keydown', function onKey(event) {
+    if (event.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
   });
 };
 
-/* ---------- Vendor cards ---------- */
+/* ================= Navigation ================= */
 
-const createVendorCard = (name = '', price = '', proposal = '', files = []) => `
+const switchView = (name) => {
+  if (!VIEW_META[name]) return;
+  currentView = name;
+  document.querySelectorAll('.nav-item').forEach((item) => {
+    item.classList.toggle('active', item.dataset.view === name);
+  });
+  document.querySelectorAll('.view').forEach((view) => {
+    view.classList.toggle('active', view.id === `view-${name}`);
+  });
+  el('pageTitle').textContent = VIEW_META[name][0];
+  el('pageSubtitle').textContent = VIEW_META[name][1];
+  closeSidebar();
+  window.scrollTo({ top: 0 });
+};
+
+const openSidebar = () => {
+  el('sidebar').classList.add('open');
+  el('sidebarScrim').classList.add('show');
+};
+const closeSidebar = () => {
+  el('sidebar').classList.remove('open');
+  el('sidebarScrim').classList.remove('show');
+};
+
+/* ================= Vendor cards & file queues ================= */
+
+const fileIcon = (name) => (name.toLowerCase().endsWith('.pdf') ? '📄' : '📃');
+
+const validateFile = (file) => {
+  const ext = `.${(file.name.split('.').pop() || '').toLowerCase()}`;
+  if (!LIMITS.allowedExtensions.includes(ext)) return `${file.name}: unsupported type (PDF or TXT only)`;
+  if (file.size === 0) return `${file.name}: file is empty`;
+  if (file.size > LIMITS.maxFileBytes) return `${file.name}: exceeds 10 MB limit`;
+  return null;
+};
+
+const renderFileQueue = (card) => {
+  const queue = card._fileQueue || [];
+  const container = card.querySelector('.file-queue');
+  if (!container) return;
+  if (!queue.length) {
+    container.innerHTML = '';
+    updateReadiness();
+    return;
+  }
+  container.innerHTML = queue.map((entry, index) => `
+    <div class="file-item ${entry.error ? 'invalid' : ''}">
+      <span class="file-icon">${fileIcon(entry.file.name)}</span>
+      <span class="file-name" title="${escapeHtml(entry.file.name)}">${escapeHtml(entry.file.name)}</span>
+      <span class="file-meta">${fmtBytes(entry.file.size)}</span>
+      <span class="file-actions">
+        ${entry.file.name.toLowerCase().endsWith('.txt') ? `<button type="button" data-preview="${index}" title="Preview text">👁</button>` : ''}
+        <button type="button" class="remove" data-remove="${index}" title="Remove file">✕</button>
+      </span>
+      ${entry.error ? `<span class="file-error">${escapeHtml(entry.error)}</span>` : ''}
+    </div>`).join('');
+
+  container.querySelectorAll('[data-remove]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      queue.splice(Number(button.dataset.remove), 1);
+      renderFileQueue(card);
+    });
+  });
+  container.querySelectorAll('[data-preview]').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const entry = queue[Number(button.dataset.preview)];
+      if (!entry) return;
+      try {
+        const text = await entry.file.text();
+        openModal(`Preview — ${entry.file.name}`, `<pre>${escapeHtml(text.slice(0, 20000))}${text.length > 20000 ? '\n… (truncated)' : ''}</pre>`);
+      } catch {
+        toast('Could not read file for preview.', 'error');
+      }
+    });
+  });
+  updateReadiness();
+};
+
+const addFilesToCard = (card, fileList) => {
+  const queue = card._fileQueue || (card._fileQueue = []);
+  Array.from(fileList || []).forEach((file) => {
+    if (queue.length >= LIMITS.maxFilesPerVendor) {
+      toast(`Maximum ${LIMITS.maxFilesPerVendor} documents per bidder.`, 'error');
+      return;
+    }
+    const error = validateFile(file);
+    queue.push({ file, error });
+    if (error) toast(error, 'error');
+  });
+  renderFileQueue(card);
+};
+
+const createVendorCard = (name = '', price = '', proposal = '') => `
   <div class="vendor-card">
     <div class="vendor-card-header">
-      <input class="vendor-name" value="${escapeHtml(name)}" placeholder="Vendor name" aria-label="Vendor name" />
-      <button class="ghost remove-vendor" type="button">Remove</button>
+      <input class="vendor-name" value="${escapeHtml(name)}" placeholder="Bidder / vendor name" aria-label="Vendor name" />
+      <button class="remove-vendor" type="button">Remove</button>
     </div>
-    <div class="two-col">
+    <div class="vendor-grid">
       <div class="field-group">
         <label>Quoted price</label>
         <input class="vendor-price" type="number" min="0" value="${escapeHtml(price)}" placeholder="250000" />
       </div>
       <div class="field-group">
         <label>Proposal summary</label>
-        <textarea class="vendor-proposal" placeholder="Describe the bid summary...">${escapeHtml(proposal)}</textarea>
+        <textarea class="vendor-proposal" rows="2" placeholder="Describe the bid…">${escapeHtml(proposal)}</textarea>
       </div>
     </div>
-    <div class="field-group" style="margin-bottom: 0;">
-      <label>Bid documents (optional)</label>
-      <input class="vendor-files" type="file" multiple accept=".pdf,.txt" />
-      <div class="responsive-note uploaded-files">${files.length ? files.map((file) => escapeHtml(file.name)).join(', ') : 'No files selected; text summary will be used for evaluation.'}</div>
+    <div class="field-group" style="margin-bottom:0">
+      <label>Bid documents</label>
+      <div class="dropzone" tabindex="0" role="button" aria-label="Upload bid documents">
+        <strong>Drop files here</strong> or click to browse — PDF / TXT, 10 MB max
+        <input class="vendor-files" type="file" multiple accept=".pdf,.txt" hidden />
+      </div>
+      <div class="file-queue"></div>
     </div>
   </div>
 `;
 
 const bindVendorCard = (card) => {
+  card._fileQueue = card._fileQueue || [];
+
   const remove = card.querySelector('.remove-vendor');
-  if (remove) {
-    remove.addEventListener('click', () => {
-      const container = el('vendorList');
-      if (container.children.length > 1) card.remove();
-    });
-  }
+  remove.addEventListener('click', () => {
+    const container = el('vendorList');
+    if (container.children.length > 1) {
+      card.remove();
+      updateReadiness();
+    } else {
+      toast('At least one bidder is required.', 'error');
+    }
+  });
+
+  const dropzone = card.querySelector('.dropzone');
   const fileInput = card.querySelector('.vendor-files');
-  if (fileInput) {
-    fileInput.addEventListener('change', (event) => {
-      const names = Array.from(event.target.files || []).map((file) => file.name);
-      const fileLabel = card.querySelector('.uploaded-files');
-      if (fileLabel) {
-        fileLabel.textContent = names.length
-          ? names.join(', ')
-          : 'No files selected; text summary will be used for evaluation.';
-      }
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileInput.click(); }
+  });
+  fileInput.addEventListener('change', () => {
+    addFilesToCard(card, fileInput.files);
+    fileInput.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach((type) => {
+    dropzone.addEventListener(type, (event) => {
+      event.preventDefault();
+      dropzone.classList.add('drag-active');
     });
-  }
+  });
+  ['dragleave', 'drop'].forEach((type) => {
+    dropzone.addEventListener(type, (event) => {
+      event.preventDefault();
+      dropzone.classList.remove('drag-active');
+    });
+  });
+  dropzone.addEventListener('drop', (event) => {
+    addFilesToCard(card, event.dataTransfer?.files);
+  });
+
+  card.querySelector('.vendor-name').addEventListener('input', updateReadiness);
 };
 
 const renderVendorCards = (vendors) => {
   const container = el('vendorList');
-  container.innerHTML = vendors.map((vendor) => createVendorCard(vendor.name, vendor.price, vendor.proposal, vendor.files || [])).join('');
+  container.innerHTML = vendors.map((vendor) => createVendorCard(vendor.name, vendor.price, vendor.proposal)).join('');
   container.querySelectorAll('.vendor-card').forEach(bindVendorCard);
+  updateReadiness();
 };
 
 const getFormState = () => {
@@ -112,6 +298,21 @@ const getFormState = () => {
   };
 };
 
+const updateReadiness = () => {
+  const cards = Array.from(document.querySelectorAll('.vendor-card'));
+  let docs = 0;
+  let bytes = 0;
+  cards.forEach((card) => {
+    (card._fileQueue || []).forEach((entry) => {
+      docs += 1;
+      bytes += entry.file.size;
+    });
+  });
+  el('rdVendors').textContent = String(cards.length);
+  el('rdDocs').textContent = String(docs);
+  el('rdSize').textContent = fmtBytes(bytes);
+};
+
 const loadDemo = () => {
   el('tenderTitle').value = 'Modern Secure Government Data Platform';
   el('tenderDescription').value = 'Procurement for a secure government data platform with migration, governance, and modernization requirements.';
@@ -122,42 +323,40 @@ const loadDemo = () => {
   el('evaluationCriteria').value = 'Technical compliance, price competitiveness, relevant experience, delivery timeline, eligibility and documentation.';
 
   renderVendorCards([
-    { name: 'Northstar Systems', price: '740000', proposal: 'Fictional Vendor A: lower quotation with moderate technical compliance, phased migration, and a 10-month delivery window. Sample file: samples/vendor-a-northstar.txt.' },
-    { name: 'Meridian Consulting', price: '910000', proposal: 'Fictional Vendor B: higher quotation with excellent technical compliance, SOC 2 controls, comparable deployments, and a 7-month delivery window. Sample file: samples/vendor-b-meridian.txt.' },
-    { name: 'Helio DataWorks', price: '820000', proposal: 'Fictional Vendor C: competitive quotation with incomplete documentation and missing security certification evidence. Sample file: samples/vendor-c-helio.txt.' },
+    { name: 'Northstar Systems', price: '740000', proposal: 'Fictional Vendor A: lower quotation with moderate technical compliance, phased migration, and a 10-month delivery window.' },
+    { name: 'Meridian Consulting', price: '910000', proposal: 'Fictional Vendor B: higher quotation with excellent technical compliance, SOC 2 controls, comparable deployments, and a 7-month delivery window.' },
+    { name: 'Helio DataWorks', price: '820000', proposal: 'Fictional Vendor C: competitive quotation with incomplete documentation and missing security certification evidence.' },
   ]);
+  toast('Demo tender loaded — sample bidders are fictional.', 'info');
 };
 
-/* ---------- Client-side validation ---------- */
+/* ================= Validation ================= */
 
 const validateForm = () => {
   const errors = [];
   const cards = Array.from(document.querySelectorAll('.vendor-card'));
 
-  if (!cards.length) errors.push('At least one vendor is required.');
+  if (!cards.length) errors.push('At least one bidder is required.');
   if (cards.length > LIMITS.maxVendors) {
-    errors.push(`At most ${LIMITS.maxVendors} vendors are allowed (found ${cards.length}).`);
+    errors.push(`At most ${LIMITS.maxVendors} bidders are allowed (found ${cards.length}).`);
   }
 
+  let totalBytes = 0;
   cards.forEach((card, index) => {
-    const label = card.querySelector('.vendor-name').value || `Vendor ${index + 1}`;
-    const files = Array.from(card.querySelector('.vendor-files').files || []);
-    if (files.length > LIMITS.maxFilesPerVendor) {
-      errors.push(`${label}: at most ${LIMITS.maxFilesPerVendor} documents per vendor (found ${files.length}).`);
+    const label = card.querySelector('.vendor-name').value || `Bidder ${index + 1}`;
+    const queue = card._fileQueue || [];
+    if (queue.length > LIMITS.maxFilesPerVendor) {
+      errors.push(`${label}: at most ${LIMITS.maxFilesPerVendor} documents (found ${queue.length}).`);
     }
-    files.forEach((file) => {
-      const ext = `.${(file.name.split('.').pop() || '').toLowerCase()}`;
-      if (!LIMITS.allowedExtensions.includes(ext)) {
-        errors.push(`${label}: "${file.name}" is not a supported type (PDF or TXT only).`);
-      }
-      if (file.size > LIMITS.maxFileBytes) {
-        errors.push(`${label}: "${file.name}" exceeds the 10 MB per-document limit.`);
-      }
-      if (file.size === 0) {
-        errors.push(`${label}: "${file.name}" is empty.`);
-      }
+    queue.forEach((entry) => {
+      totalBytes += entry.file.size;
+      if (entry.error) errors.push(`${label}: ${entry.error}`);
     });
   });
+
+  if (totalBytes > LIMITS.maxRequestBytes) {
+    errors.push(`Total upload size exceeds the 50 MB request limit (${fmtBytes(totalBytes)}).`);
+  }
 
   const budget = Number(el('maximumBudget').value || 0);
   if (budget < 0) errors.push('Maximum budget cannot be negative.');
@@ -176,123 +375,55 @@ const showFormErrors = (errors) => {
   box.innerHTML = `<strong>Fix the following before evaluating:</strong><ul>${errors.map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`;
 };
 
-/* ---------- Health / overview ---------- */
+/* ================= Progress stepper ================= */
 
-const verificationExplanationFor = (state, verification = {}) => {
-  switch (state) {
-    case 'MODEL_TEE_VERIFIED':
-      return 'The official NEAR AI Inference SDK verified a provider_tee signature: the attestation report was nonce-bound, the model attestation was verified, and the response signature was verified against the retained request and response bytes. This is the strongest verification BIDVEIL reports.';
-    case 'GATEWAY_ONLY':
-      return 'A gateway signature was verified by the SDK, proving the response passed through the verified NEAR AI gateway. The signature kind was gateway, not provider_tee, so model-level TEE execution is NOT proven.';
-    case 'SIGNATURE_VERIFIED':
-    case 'ATTESTATION_VERIFIED':
-      return 'Partial verification completed. See the details below for which checks passed and which are unavailable.';
-    case 'VERIFICATION_FAILED':
-      return 'A cryptographic verification check failed. The evaluation result is not trustworthy and should not be used.';
-    case 'VERIFICATION_UNAVAILABLE':
-      return 'Verification could not be performed — typically a provider-side issue such as billing (HTTP 402), connectivity, or timeout. No verification claims are made.';
-    case 'ATTESTATION_PENDING':
-      return 'Attestation verification is in progress.';
-    default:
-      return verification.status || 'Waiting for evaluation.';
-  }
+const resetProgress = () => {
+  el('progressPanel').hidden = false;
+  el('progressSteps').innerHTML = PROGRESS_STEPS.map((step) => `
+    <div class="pstep" data-step="${step.key}">
+      <span class="pstep-dot"></span><span>${step.label}</span>
+    </div>`).join('');
+  el('processingDetails').innerHTML = '';
 };
 
-const updateVerificationCard = (verification = {}) => {
-  const badge = el('verificationBadge');
-  const list = el('verificationDetails');
-  const explanation = el('verificationExplanation');
-  const signatureKind = verification.responseSignatureKind || verification.signatureType || 'unavailable';
-  const modelTee = verification.state === 'MODEL_TEE_VERIFIED'
-    && verification.modelVerified === true
-    && signatureKind === 'provider_tee';
-  const state = verification.state
-    || (modelTee ? 'MODEL_TEE_VERIFIED' : signatureKind === 'gateway' ? 'GATEWAY_ONLY' : 'WAITING');
-
-  badge.textContent = state;
-  badge.className = `badge ${verificationBadgeClass(state)}`;
-  explanation.textContent = verificationExplanationFor(state, verification);
-
-  const evidence = Array.isArray(verification.evidenceIds) && verification.evidenceIds.length
-    ? verification.evidenceIds.join(', ')
-    : 'none reported';
-  const unavailable = Array.isArray(verification.unavailableChecks) && verification.unavailableChecks.length
-    ? verification.unavailableChecks.join(' ')
-    : 'none';
-  const rows = [
-    `Verification status: ${state}`,
-    `Selected model: ${verification.model || 'pending'}`,
-    `Model identity: ${verification.modelIdentity || 'not reported'}`,
-    `Attestation: ${verification.attestationStatus || (verification.gatewayVerified ? 'gateway checked' : 'pending')}`,
-    `Nonce verification: ${verification.nonceVerified === true ? 'matched' : 'not verified'}`,
-    `Nonce: ${verification.nonce || 'not reported'}`,
-    `Signature verification: ${verification.signatureVerified === true ? 'verified' : 'not verified'}`,
-    `Signature type: ${signatureKind}`,
-    `Hash verification: ${verification.hashVerified === true ? 'signed payload parsed' : 'not verified'}`,
-    `Request hash: ${verification.requestHash || 'not reported'}`,
-    `Response hash: ${verification.responseHash || 'not reported'}`,
-    `Signed model id: ${verification.signedModelId || 'not reported'}`,
-    `Completion id: ${verification.completionId || 'not reported'}`,
-    `Provider type: ${verification.providerType || 'not reported'}`,
-    `Verification timestamp: ${verification.verifiedAt || 'not reported'}`,
-    `Evidence identifiers: ${evidence}`,
-    `GPU evidence: ${verification.gpuEvidence || 'unavailable'}`,
-    `Unavailable checks: ${unavailable}`,
-    `Failure explanation: ${verification.failureReason || verification.status || 'none'}`,
-  ];
-  if (signatureKind === 'gateway' || state === 'GATEWAY_ONLY') {
-    rows.push('Note: A gateway signature is not proof of model-level TEE execution.');
-  }
-  list.replaceChildren(...rows.map((row) => {
-    const item = document.createElement('li');
-    item.textContent = row;
-    return item;
-  }));
-
-  const notice = el('verificationUnavailable');
-  if (state === 'VERIFICATION_UNAVAILABLE' || state === 'VERIFICATION_FAILED') {
-    notice.hidden = false;
-    el('verificationUnavailableText').textContent = verification.failureReason || verification.status || '';
-  } else {
-    notice.hidden = true;
-  }
+const markStep = (key, status) => {
+  const step = el('progressSteps').querySelector(`[data-step="${key}"]`);
+  if (!step) return;
+  step.classList.remove('active', 'done', 'failed');
+  step.classList.add(status);
 };
 
-const verificationBadgeClass = (state) => {
-  if (state === 'MODEL_TEE_VERIFIED') return 'success';
-  if (state === 'VERIFICATION_FAILED') return 'danger';
-  if (state === 'VERIFICATION_UNAVAILABLE') return 'warning';
-  if (state === 'GATEWAY_ONLY' || state === 'SIGNATURE_VERIFIED' || state === 'ATTESTATION_VERIFIED' || state === 'ATTESTATION_PENDING') {
-    return 'warning';
-  }
-  return 'neutral';
+const STATE_TO_STEP = {
+  extracting: 'extracting',
+  preparing: 'preparing',
+  verifying: 'verifying',
+  evaluation_completed: 'evaluation_completed',
+  cleanup_completed: 'cleanup_completed',
+  cleanup_failed: 'cleanup_completed',
+  failed: 'evaluation_completed',
+  verification_unavailable: 'verifying',
 };
 
-/* ---------- Processing / results rendering ---------- */
-
-const renderProcessing = (processing = [], documents = []) => {
-  const list = el('processingDetails');
-  const entries = [
-    ...processing.map((item) => item.status),
-    ...documents.map((document) => `${document.fileName}: ${document.status}${document.message ? ` — ${document.message}` : ''}`),
-  ];
-  list.replaceChildren(...entries.map((entry) => {
-    const item = document.createElement('li');
-    item.textContent = entry;
-    return item;
-  }));
+const handleProgressState = (state, status) => {
+  const key = STATE_TO_STEP[state];
+  if (!key) return;
+  const index = PROGRESS_STEPS.findIndex((step) => step.key === key);
+  PROGRESS_STEPS.forEach((step, i) => {
+    if (i < index) markStep(step.key, 'done');
+    else if (i === index) markStep(step.key, state === 'failed' || state === 'verification_unavailable' || state === 'cleanup_failed' ? 'failed' : 'active');
+  });
+  if (state === 'cleanup_completed') markStep('cleanup_completed', 'done');
 };
 
-const setCurrentProcessing = (state, append = false) => {
+const appendLog = (text) => {
   const list = el('processingDetails');
   const item = document.createElement('li');
-  item.textContent = state;
-  if (append) {
-    list.appendChild(item);
-  } else {
-    list.replaceChildren(item);
-  }
+  item.textContent = text;
+  list.appendChild(item);
+  list.scrollTop = list.scrollHeight;
 };
+
+/* ================= SSE ================= */
 
 const readEvaluationStream = async (response) => {
   const reader = response.body.getReader();
@@ -305,7 +436,8 @@ const readEvaluationStream = async (response) => {
     if (!dataLine) return;
     const event = JSON.parse(dataLine.slice(5).trim());
     if (event.type === 'state') {
-      setCurrentProcessing(event.status, true);
+      handleProgressState(event.state || '', event.status || '');
+      appendLog(event.status || event.state || 'Processing…');
     } else if (event.type === 'result') {
       finalEvent = event;
     }
@@ -324,74 +456,323 @@ const readEvaluationStream = async (response) => {
   return finalEvent;
 };
 
-const renderRankings = (vendors = []) => {
+/* ================= Verification centre ================= */
+
+const verificationExplanationFor = (state, verification = {}) => {
+  switch (state) {
+    case 'MODEL_TEE_VERIFIED':
+      return 'The official NEAR AI Inference SDK verified a provider_tee signature: the attestation report was nonce-bound, the model attestation was verified, and the response signature was verified against the retained request and response bytes. This is the strongest verification BIDVEIL reports.';
+    case 'GATEWAY_ONLY':
+      return 'A gateway signature was verified by the SDK, proving the response passed through the verified NEAR AI gateway. The signature kind was gateway, not provider_tee, so model-level TEE execution is NOT proven.';
+    case 'SIGNATURE_VERIFIED':
+    case 'ATTESTATION_VERIFIED':
+      return 'Partial verification completed. See the evidence details for which checks passed and which are unavailable.';
+    case 'VERIFICATION_FAILED':
+      return 'A cryptographic verification check failed. The evaluation result is not trustworthy and should not be used.';
+    case 'VERIFICATION_UNAVAILABLE':
+      return 'Verification could not be performed — typically a provider-side issue such as billing (HTTP 402), connectivity, or timeout. No verification claims are made.';
+    case 'ATTESTATION_PENDING':
+      return 'Attestation verification is in progress.';
+    default:
+      return verification.status || 'Waiting for evaluation.';
+  }
+};
+
+const badgeClassFor = (state) => {
+  const map = {
+    MODEL_TEE_VERIFIED: 'success',
+    GATEWAY_ONLY: 'warning',
+    SIGNATURE_VERIFIED: 'warning',
+    ATTESTATION_VERIFIED: 'warning',
+    ATTESTATION_PENDING: 'warning',
+    VERIFICATION_FAILED: 'danger',
+    VERIFICATION_UNAVAILABLE: 'danger',
+    WAITING: 'neutral',
+  };
+  return map[state] || 'neutral';
+};
+
+const triState = (value) => {
+  if (value === true) return { text: 'Verified', cls: 'ok' };
+  if (value === false) return { text: 'Failed', cls: 'bad' };
+  return { text: 'Not performed', cls: 'muted' };
+};
+
+const updateVerificationCard = (verification = {}) => {
+  const signatureKind = verification.responseSignatureKind || verification.signatureType || 'unavailable';
+  const modelTee = verification.state === 'MODEL_TEE_VERIFIED'
+    && verification.modelVerified === true
+    && signatureKind === 'provider_tee';
+  const state = verification.state
+    || (modelTee ? 'MODEL_TEE_VERIFIED' : signatureKind === 'gateway' ? 'GATEWAY_ONLY' : 'WAITING');
+
+  const badge = el('verificationBadge');
+  badge.textContent = state;
+  badge.className = `badge badge-lg ${badgeClassFor(state)}`;
+  el('verificationMode').textContent = `mode: ${verification.mode || '—'}`;
+  el('verificationExplanation').textContent = verificationExplanationFor(state, verification);
+
+  // Three headline verification stats
+  const gateway = triState(verification.gatewayVerified);
+  const model = verification.state === 'MODEL_TEE_VERIFIED' ? { text: 'TEE verified', cls: 'ok' }
+    : signatureKind === 'gateway' ? { text: 'Gateway only', cls: 'warn' }
+    : triState(verification.modelVerified);
+  const attestation = verification.attestationVerified === true || verification.attestationStatus === 'verified'
+    ? { text: 'Verified', cls: 'ok' }
+    : verification.attestationStatus ? { text: String(verification.attestationStatus), cls: 'warn' }
+    : { text: 'Not performed', cls: 'muted' };
+
+  const setStat = (id, st) => {
+    el(id).querySelector('strong').textContent = st.text;
+    el(id).className = `stat-card verify-stat ${st.cls}`;
+  };
+  setStat('vsGatewayState', gateway);
+  setStat('vsModelState', model);
+  setStat('vsAttestationState', attestation);
+
+  // Lifecycle timeline — honest about how far verification progressed
+  const reached = {
+    WAITING: [],
+    ATTESTATION_PENDING: ['nonce', 'attestation'],
+    ATTESTATION_VERIFIED: ['nonce', 'attestation', 'noncebind', 'sdkverify'],
+    SIGNATURE_VERIFIED: ['nonce', 'attestation', 'noncebind', 'sdkverify', 'inference', 'signature'],
+    MODEL_TEE_VERIFIED: ['nonce', 'attestation', 'noncebind', 'sdkverify', 'inference', 'signature', 'result'],
+    GATEWAY_ONLY: ['nonce', 'attestation', 'noncebind', 'sdkverify', 'inference', 'signature', 'result'],
+    VERIFICATION_FAILED: ['nonce', 'attestation', 'noncebind', 'sdkverify', 'inference', 'signature'],
+    VERIFICATION_UNAVAILABLE: [],
+  }[state] || [];
+  const failedAt = state === 'VERIFICATION_FAILED' ? 'signature' : null;
+  const unavailable = state === 'VERIFICATION_UNAVAILABLE';
+
+  document.querySelectorAll('#verifyTimeline li').forEach((li) => {
+    const step = li.dataset.step;
+    li.classList.remove('done', 'active', 'failed', 'todo');
+    if (unavailable) { li.classList.add('todo'); return; }
+    const idx = reached.indexOf(step);
+    if (failedAt === step) li.classList.add('failed');
+    else if (idx === reached.length - 1 && state !== 'VERIFICATION_FAILED') li.classList.add('done');
+    else if (idx >= 0) li.classList.add('done');
+    else li.classList.add('todo');
+  });
+
+  // Evidence detail grid
+  const evidence = Array.isArray(verification.evidenceIds) && verification.evidenceIds.length
+    ? verification.evidenceIds.join(', ') : 'none reported';
+  const unavailableChecks = Array.isArray(verification.unavailableChecks) && verification.unavailableChecks.length
+    ? verification.unavailableChecks.join(' ') : 'none';
+  const rows = [
+    ['Verification status', state, true],
+    ['Mode', verification.mode || '—', true],
+    ['Selected model', verification.model || 'pending', true],
+    ['Model identity', verification.modelIdentity || 'not reported', true],
+    ['Provider type', verification.providerType || 'not reported', true],
+    ['Attestation status', verification.attestationStatus || (verification.gatewayVerified ? 'gateway checked' : 'pending'), true],
+    ['Nonce', verification.nonce || 'not reported', true],
+    ['Nonce verified', verification.nonceVerified === true ? 'matched' : 'not verified', true],
+    ['Signature verified', verification.signatureVerified === true ? 'yes' : 'no', true],
+    ['Signature kind', signatureKind, true],
+    ['Hash verified', verification.hashVerified === true ? 'signed payload parsed' : 'not verified', true],
+    ['Signed model id', verification.signedModelId || 'not reported', true],
+    ['Completion id', verification.completionId || 'not reported', true],
+    ['Request hash', verification.requestHash || 'not reported', true],
+    ['Response hash', verification.responseHash || 'not reported', true],
+    ['Verified at', verification.verifiedAt || 'not reported', true],
+    ['GPU evidence', verification.gpuEvidence || 'unavailable', true],
+    ['Evidence identifiers', evidence, false],
+    ['Unavailable checks', unavailableChecks, false],
+    ['Failure explanation', verification.failureReason || verification.status || 'none', false],
+  ];
+  el('verificationDetails').innerHTML = rows.map(([k, v, mono]) => `
+    <div class="dk">${escapeHtml(k)}</div><div class="dv ${mono ? '' : 'wrap'}">${escapeHtml(v)}</div>`).join('');
+
+  const notice = el('verificationUnavailable');
+  if (state === 'VERIFICATION_UNAVAILABLE' || state === 'VERIFICATION_FAILED') {
+    notice.hidden = false;
+    el('verificationUnavailableText').textContent = verification.failureReason || verification.status || '';
+  } else {
+    notice.hidden = true;
+  }
+
+  // Nav badge reflects latest state
+  const navBadge = el('verifyNavBadge');
+  if (state === 'MODEL_TEE_VERIFIED') { navBadge.hidden = false; navBadge.textContent = 'TEE'; }
+  else if (state === 'GATEWAY_ONLY') { navBadge.hidden = false; navBadge.textContent = 'GW'; }
+  else if (state === 'VERIFICATION_FAILED' || state === 'VERIFICATION_UNAVAILABLE') { navBadge.hidden = false; navBadge.textContent = '!'; }
+  else navBadge.hidden = true;
+};
+
+const renderProcessingFinal = (processing = [], documents = []) => {
+  const list = el('processingDetails');
+  list.innerHTML = '';
+  const entries = [
+    ...processing.map((item) => item.status),
+    ...documents.map((doc) => `${doc.fileName}: ${doc.status}${doc.message ? ` — ${doc.message}` : ''}`),
+  ];
+  entries.forEach(appendLog);
+  if (!entries.length) appendLog('No processing events recorded.');
+};
+
+/* ================= Results ================= */
+
+const barChart = (items, { winnerName = null, valueSuffix = '' } = {}) => items.map((item) => {
+  const pct = Math.max(2, Math.min(100, Number(item.value) || 0));
+  const isWinner = winnerName && item.label === winnerName;
+  return `
+    <div class="chart-row ${isWinner ? 'winner' : ''}">
+      <span class="chart-label" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+      <div class="chart-bar-track"><div class="chart-bar ${item.alt ? 'alt' : ''}" style="width:${pct}%"></div></div>
+      <span class="chart-value">${escapeHtml(item.display ?? item.value)}${valueSuffix}</span>
+    </div>`;
+}).join('');
+
+const renderResults = (data) => {
+  lastResult = data;
+  const vendors = Array.isArray(data.vendors) ? data.vendors : [];
+  const summary = data.summary || {};
+  const verification = data.verification || {};
+
+  el('resultsEmpty').hidden = true;
+  el('resultsContent').hidden = false;
+
+  const winner = vendors.find((v) => v.rank === 1) || vendors[0];
+  el('winnerName').textContent = summary.winner || winner?.vendorName || '—';
+  el('winnerSub').textContent = winner?.evidenceSummary
+    ? String(winner.evidenceSummary).slice(0, 220)
+    : 'Evidence summary not provided by the evaluation.';
+  el('winnerScoreChip').textContent = winner ? `Score ${winner.weightedScore ?? '—'}` : '—';
+  el('winnerPriceChip').textContent = winner ? `Quote $${Number(winner.quotedPrice || 0).toLocaleString()}` : '—';
+  el('winnerVerifyChip').textContent = `Verification: ${verification.state || '—'}`;
+
+  el('averageScore').textContent = typeof summary.averageScore === 'number' ? `${summary.averageScore} / 100` : '—';
+  el('vendorCount').textContent = String(vendors.length);
+  el('modelName').textContent = verification.model || '—';
+  el('resultVerifyState').textContent = verification.state || '—';
+
+  // Weighted score chart
+  el('scoreChart').innerHTML = vendors.length
+    ? barChart(vendors.map((v) => ({
+        label: v.vendorName,
+        value: v.weightedScore ?? 0,
+        display: v.weightedScore ?? '—',
+      })), { winnerName: summary.winner || winner?.vendorName })
+    : '<p class="empty-state">No vendors returned.</p>';
+
+  // Criteria chart — winner's per-criteria scores
+  const critItems = winner
+    ? CRITERIA_KEYS.map(([key, label]) => ({ label, value: winner[key] ?? 0, display: winner[key] ?? '—', alt: true }))
+    : [];
+  el('criteriaChart').innerHTML = critItems.length
+    ? barChart(critItems)
+    : '<p class="empty-state">Criteria scores unavailable.</p>';
+  el('weightLegend').innerHTML = Object.entries(WEIGHT_LABELS).map(([key, label]) =>
+    `<span class="chip" data-tip="${escapeHtml(label)}">${escapeHtml(label)} · ${Math.round((defaultWeights[key] || 0) * 100)}%</span>`).join('');
+
+  // Rankings table
   const tbody = el('rankingsBody');
-  if (!vendors.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">No vendors returned.</td></tr>';
-    return;
+  tbody.innerHTML = vendors.length
+    ? vendors.map((v) => `
+      <tr>
+        <td><strong>#${escapeHtml(v.rank)}</strong></td>
+        <td>${escapeHtml(v.vendorName)}</td>
+        <td class="col-score">
+          <div class="score-cell">
+            <div class="mini-track"><div class="mini-fill ${v.rank === 1 ? 'top' : ''}" style="width:${Math.min(100, Number(v.weightedScore) || 0)}%"></div></div>
+            <span class="mono">${escapeHtml(v.weightedScore ?? '—')}</span>
+          </div>
+        </td>
+        <td>$${escapeHtml(Number(v.quotedPrice || 0).toLocaleString())}</td>
+        <td>${escapeHtml((v.riskIndicators || [])[0] || 'Low')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="empty-cell">No vendors returned.</td></tr>';
+
+  // Rationale — built only from returned fields
+  const rationale = [];
+  if (winner) {
+    rationale.push(`<p class="rationale-winner">${escapeHtml(summary.winner || winner.vendorName)} is the recommended awardee</p>`);
+    if (winner.evidenceSummary) rationale.push(`<p>${escapeHtml(winner.evidenceSummary)}</p>`);
+    if ((winner.strengths || []).length) rationale.push(`<p><strong>Strengths:</strong> ${escapeHtml(winner.strengths.join(', '))}</p>`);
+    if ((winner.weaknesses || []).length) rationale.push(`<p><strong>Weaknesses:</strong> ${escapeHtml(winner.weaknesses.join(', '))}</p>`);
+    if ((winner.missingInformation || []).length) rationale.push(`<p><strong>Missing information:</strong> ${escapeHtml(winner.missingInformation.join(', '))}</p>`);
+  } else {
+    rationale.push('<p>No recommendation could be derived from the evaluation response.</p>');
   }
-  tbody.innerHTML = vendors.map((vendor) => `
-    <tr>
-      <td>#${escapeHtml(vendor.rank)}</td>
-      <td>${escapeHtml(vendor.vendorName)}</td>
-      <td>${escapeHtml(vendor.weightedScore)}</td>
-      <td>$${escapeHtml(Number(vendor.quotedPrice || 0).toLocaleString())}</td>
-      <td>${escapeHtml(vendor.riskIndicators?.[0] || 'Low')}</td>
-    </tr>
-  `).join('');
+  el('rationaleBox').innerHTML = rationale.join('');
+
+  // Risk panel
+  const riskVendors = vendors.filter((v) => (v.riskIndicators || []).length);
+  el('riskPanel').innerHTML = riskVendors.length
+    ? riskVendors.map((v) => `
+      <div class="risk-item">
+        <span class="risk-vendor">${escapeHtml(v.vendorName)}</span>
+        <ul>${v.riskIndicators.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
+      </div>`).join('')
+    : '<p class="risk-none">No risk indicators reported by the evaluation.</p>';
+
+  // Evidence detail cards
+  el('vendorDetails').innerHTML = vendors.length
+    ? vendors.map((v) => `
+      <div class="evidence-card">
+        <h3>#${escapeHtml(v.rank)} · ${escapeHtml(v.vendorName)}</h3>
+        <p>${escapeHtml(v.evidenceSummary || 'Evidence summary not available.')}</p>
+        <div class="metric-grid">
+          ${CRITERIA_KEYS.map(([key, label]) => `<div class="metric"><label>${label}</label><strong>${escapeHtml(v[key] ?? '—')}</strong></div>`).join('')}
+          <div class="metric"><label>Weighted</label><strong>${escapeHtml(v.weightedScore ?? '—')}</strong></div>
+        </div>
+        <p><strong>Strengths:</strong> ${escapeHtml((v.strengths || []).join(', ') || 'Not specified')}</p>
+        <p><strong>Weaknesses:</strong> ${escapeHtml((v.weaknesses || []).join(', ') || 'Not specified')}</p>
+        <p><strong>Risk indicators:</strong> ${escapeHtml((v.riskIndicators || []).join(', ') || 'No notable risks')}</p>
+        <p><strong>Missing information:</strong> ${escapeHtml((v.missingInformation || []).join(', ') || 'None identified')}</p>
+      </div>`).join('')
+    : '<p class="empty-state">No vendor evidence returned.</p>';
+
+  const badge = el('resultsBadge');
+  badge.hidden = false;
+  badge.textContent = String(vendors.length);
 };
 
-const renderVendorDetails = (vendors = []) => {
-  const details = el('vendorDetails');
-  if (!vendors.length) {
-    details.innerHTML = '<p class="empty-state">No vendor evidence returned.</p>';
-    return;
-  }
-  details.innerHTML = vendors.map((vendor) => `
-    <div class="evidence-card">
-      <h3>${escapeHtml(vendor.rank)}. ${escapeHtml(vendor.vendorName)}</h3>
-      <p class="responsive-note">${escapeHtml(vendor.evidenceSummary || 'Evidence summary not available.')}</p>
-      <div class="metric-grid">
-        <div class="metric"><label>Technical</label><strong>${escapeHtml(vendor.technicalComplianceScore)}</strong></div>
-        <div class="metric"><label>Price</label><strong>${escapeHtml(vendor.priceCompetitivenessScore)}</strong></div>
-        <div class="metric"><label>Experience</label><strong>${escapeHtml(vendor.relevantExperienceScore)}</strong></div>
-        <div class="metric"><label>Delivery</label><strong>${escapeHtml(vendor.deliveryTimelineScore)}</strong></div>
-        <div class="metric"><label>Eligibility</label><strong>${escapeHtml(vendor.eligibilityDocumentationScore)}</strong></div>
-        <div class="metric"><label>Weighted score</label><strong>${escapeHtml(vendor.weightedScore)}</strong></div>
-      </div>
-      <p><strong>Strengths:</strong> ${escapeHtml((vendor.strengths || []).join(', ') || 'Not specified')}</p>
-      <p><strong>Weaknesses:</strong> ${escapeHtml((vendor.weaknesses || []).join(', ') || 'Not specified')}</p>
-      <p><strong>Risk indicators:</strong> ${escapeHtml((vendor.riskIndicators || []).join(', ') || 'No notable risks')}</p>
-      <p><strong>Missing information:</strong> ${escapeHtml((vendor.missingInformation || []).join(', ') || 'None identified')}</p>
-    </div>
-  `).join('');
+/* ================= Report export ================= */
+
+const downloadReport = () => {
+  if (!lastResult) { toast('No evaluation result to export.', 'error'); return; }
+  const data = lastResult;
+  const vendors = data.vendors || [];
+  const verification = data.verification || {};
+  const rows = vendors.map((v) => `
+    <tr><td>${v.rank}</td><td>${escapeHtml(v.vendorName)}</td><td>${v.weightedScore ?? '—'}</td>
+    <td>$${Number(v.quotedPrice || 0).toLocaleString()}</td>
+    <td>${escapeHtml((v.riskIndicators || []).join('; ') || 'None')}</td></tr>`).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>BIDVEIL Evaluation Report</title>
+<style>body{font-family:system-ui,sans-serif;max-width:860px;margin:40px auto;color:#1a2433}h1{font-size:22px}table{border-collapse:collapse;width:100%;margin:16px 0}td,th{border:1px solid #ccc;padding:8px 10px;text-align:left;font-size:13px}th{background:#f0f4fa}.meta{color:#555;font-size:13px}code{font-family:monospace;font-size:12px}</style></head><body>
+<h1>BIDVEIL Evaluation Report</h1>
+<p class="meta">Generated ${new Date().toISOString()} · Tender: ${escapeHtml(lastPayload?.tender?.title || '—')} · Model: ${escapeHtml(verification.model || '—')}</p>
+<p><strong>Recommended awardee:</strong> ${escapeHtml(data.summary?.winner || '—')} · <strong>Average score:</strong> ${data.summary?.averageScore ?? '—'} · <strong>Verification state:</strong> ${escapeHtml(verification.state || '—')}</p>
+<table><thead><tr><th>Rank</th><th>Bidder</th><th>Score</th><th>Price</th><th>Risk</th></tr></thead><tbody>${rows}</tbody></table>
+<h2>Verification evidence</h2>
+<p class="meta">State: ${escapeHtml(verification.state || '—')} · Signature kind: ${escapeHtml(verification.responseSignatureKind || verification.signatureType || '—')} · Nonce: ${escapeHtml(verification.nonce || '—')} · Completion: ${escapeHtml(verification.completionId || '—')} · Signed model: ${escapeHtml(verification.signedModelId || '—')}</p>
+<p class="meta">AI-assisted decision support only. Not an automatic or legally binding procurement decision.</p>
+</body></html>`;
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `bidveil-report-${Date.now()}.html`;
+  link.click();
+  URL.revokeObjectURL(url);
+  toast('Report downloaded.', 'success');
 };
 
-const updateSummary = (response) => {
-  const winner = response?.summary?.winner || '—';
-  const average = response?.summary?.averageScore ?? '—';
-  const model = response?.verification?.model || '—';
-
-  el('winnerName').textContent = winner;
-  el('averageScore').textContent = typeof average === 'number' ? `${average} / 100` : average;
-  el('modelName').textContent = model;
-};
-
-/* ---------- Session history & overview ---------- */
+/* ================= Session history ================= */
 
 const recordSessionEvaluation = (data) => {
   const verification = data.verification || {};
-  const state = verification.state || 'UNKNOWN';
-  const winner = data.summary?.winner || '—';
-  const average = data.summary?.averageScore;
-  const tenderTitle = lastPayload?.tender?.title || 'Untitled tender';
   const entry = {
     timestamp: new Date(),
-    tenderTitle,
-    winner,
-    state,
-    averageScore: typeof average === 'number' ? average : null,
+    tenderTitle: lastPayload?.tender?.title || 'Untitled tender',
+    winner: data.summary?.winner || '—',
+    state: verification.state || 'UNKNOWN',
+    averageScore: typeof data.summary?.averageScore === 'number' ? data.summary.averageScore : null,
     vendorCount: Array.isArray(data.vendors) ? data.vendors.length : 0,
+    result: data,
   };
   sessionEvaluations.unshift(entry);
   renderSessionActivity();
@@ -406,30 +787,60 @@ const renderSessionActivity = () => {
 
   const container = el('sessionActivity');
   if (!sessionEvaluations.length) {
-    container.innerHTML = '<p class="empty-state">No evaluations have been run in this session.</p>';
+    container.innerHTML = '<div class="empty-state"><p>No evaluations yet this session.</p><button class="btn btn-sm btn-primary" id="ctaEvaluate2b">Start your first evaluation</button></div>';
+    el('ctaEvaluate2b').addEventListener('click', () => switchView('evaluate'));
     return;
   }
   container.innerHTML = sessionEvaluations.slice(0, 5).map((entry) => `
     <div class="activity-item">
       <span class="activity-title">${escapeHtml(entry.tenderTitle)}</span>
       <span class="activity-meta">${escapeHtml(entry.state)} · ${escapeHtml(entry.winner)} · ${entry.timestamp.toLocaleTimeString()}</span>
-    </div>
-  `).join('');
+    </div>`).join('');
 };
 
+const historyFilters = () => ({
+  query: (el('historySearch').value || '').toLowerCase(),
+  state: el('historyFilter').value,
+});
+
 const renderHistory = () => {
+  const { query, state } = historyFilters();
+  const filtered = sessionEvaluations.filter((entry) => {
+    if (state && entry.state !== state) return false;
+    if (query && !`${entry.tenderTitle} ${entry.winner} ${entry.state}`.toLowerCase().includes(query)) return false;
+    return true;
+  });
+
   const container = el('historyList');
   if (!sessionEvaluations.length) {
-    container.innerHTML = '<p class="empty-state">No evaluations recorded yet. Completed evaluations will appear here for this session only.</p>';
+    container.innerHTML = '<div class="empty-state"><p>No evaluations recorded yet this session.</p></div>';
     return;
   }
-  container.innerHTML = sessionEvaluations.map((entry) => `
+  if (!filtered.length) {
+    container.innerHTML = '<div class="empty-state"><p>No records match the current filters.</p></div>';
+    return;
+  }
+  container.innerHTML = filtered.map((entry, index) => `
     <div class="activity-item">
       <span class="activity-title">${escapeHtml(entry.tenderTitle)}</span>
-      <span class="activity-meta">${escapeHtml(entry.timestamp.toLocaleString())} · ${escapeHtml(entry.state)} · winner: ${escapeHtml(entry.winner)}${entry.averageScore !== null ? ` · avg ${entry.averageScore}` : ''} · ${entry.vendorCount} vendors</span>
-    </div>
-  `).join('');
+      <span class="activity-meta">${escapeHtml(entry.timestamp.toLocaleString())} · ${escapeHtml(entry.state)} · winner: ${escapeHtml(entry.winner)}${entry.averageScore !== null ? ` · avg ${entry.averageScore}` : ''} · ${entry.vendorCount} bidders</span>
+      <span style="margin-top:6px"><button class="btn btn-sm btn-ghost" data-load="${sessionEvaluations.indexOf(entry)}" type="button">View result</button></span>
+    </div>`).join('');
+
+  container.querySelectorAll('[data-load]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const entry = sessionEvaluations[Number(button.dataset.load)];
+      if (entry?.result) {
+        lastResult = entry.result;
+        renderResults(entry.result);
+        updateVerificationCard(entry.result.verification || {});
+        switchView('results');
+      }
+    });
+  });
 };
+
+/* ================= Health ================= */
 
 const loadHealth = async () => {
   const pill = el('serviceStatus');
@@ -443,24 +854,23 @@ const loadHealth = async () => {
     const teeLive = health.teeMode === 'live';
 
     el('ovApiStatus').textContent = health.status === 'ok' ? 'Operational' : 'Degraded';
-    el('ovTeeMode').textContent = teeLive ? 'Live (key configured)' : 'Unconfigured';
+    el('ovApiHint').textContent = 'BIDVEIL service responding';
+    el('ovTeeMode').textContent = teeLive ? 'Live' : 'Unconfigured';
+    el('ovTeeHint').textContent = teeLive ? 'API key configured — inference enabled' : 'NEARAI_API_KEY not set';
     el('ovModel').textContent = health.model || '—';
     el('ovStates').textContent = Array.isArray(health.verificationStates) ? String(health.verificationStates.length) : '—';
+    ['hcApi', 'hcTee', 'hcModel', 'hcStates'].forEach((id) => el(id).classList.add('loaded'));
 
     if (configured && teeLive) {
       pill.className = 'status-pill status-ok';
       pillText.textContent = 'NEAR AI Cloud connected';
     } else if (configured) {
       pill.className = 'status-pill status-degraded';
-      pillText.textContent = 'API key configured — verification limited';
+      pillText.textContent = 'Verification limited';
     } else {
       pill.className = 'status-pill status-degraded';
       pillText.textContent = 'NEARAI_API_KEY not configured';
     }
-
-    el('ovHealthNote').textContent = configured
-      ? `Model: ${health.model}. TEE mode: ${health.teeMode}. ${Array.isArray(health.verificationStates) ? `${health.verificationStates.length} verification states supported.` : ''}`
-      : 'NEARAI_API_KEY is not set. Evaluations will fail with VERIFICATION_UNAVAILABLE until a key is configured.';
 
     el('ovVerificationNote').textContent = teeLive
       ? 'Live verification is configured. Whether model-level TEE is proven depends on the signature kind returned by the provider for each evaluation.'
@@ -469,26 +879,33 @@ const loadHealth = async () => {
     pill.className = 'status-pill status-error';
     pillText.textContent = 'Service unreachable';
     el('ovApiStatus').textContent = 'Unreachable';
+    el('ovApiHint').textContent = error.message;
     el('ovTeeMode').textContent = 'Unknown';
+    el('ovTeeHint').textContent = 'Health check failed';
     el('ovModel').textContent = '—';
     el('ovStates').textContent = '—';
-    el('ovHealthNote').textContent = `Could not reach /api/health: ${error.message}`;
+    ['hcApi', 'hcTee', 'hcModel', 'hcStates'].forEach((id) => el(id).classList.add('loaded'));
     el('ovVerificationNote').textContent = 'Service status could not be determined.';
   }
 };
 
-/* ---------- Evaluation ---------- */
+/* ================= Evaluation ================= */
 
 const handleEvaluate = async () => {
-  const button = el('evaluateButton');
-  const retryButton = el('retryButton');
+  if (evaluating) return;
   const errors = validateForm();
   showFormErrors(errors);
-  if (errors.length) return;
+  if (errors.length) {
+    toast(`${errors.length} issue${errors.length > 1 ? 's' : ''} must be fixed before evaluation.`, 'error');
+    return;
+  }
 
+  evaluating = true;
+  const button = el('evaluateButton');
   button.disabled = true;
-  button.textContent = 'Evaluating...';
-  retryButton.hidden = true;
+  button.textContent = 'Evaluating…';
+  resetProgress();
+  appendLog('Uploading documents');
   el('verificationUnavailable').hidden = true;
 
   try {
@@ -498,42 +915,35 @@ const handleEvaluate = async () => {
     formData.append('payload', JSON.stringify(lastPayload));
     let hasUploads = false;
     cards.forEach((card, index) => {
-      Array.from(card.querySelector('.vendor-files').files || []).forEach((file) => {
-        formData.append(`bid_${index}`, file, file.name);
+      (card._fileQueue || []).forEach((entry) => {
+        formData.append(`bid_${index}`, entry.file, entry.file.name);
         hasUploads = true;
       });
     });
-    setCurrentProcessing(hasUploads ? 'Uploading documents' : 'Preparing confidential analysis');
-    const res = await fetch('/api/evaluate/stream', {
-      method: 'POST',
-      body: formData,
-    });
+    if (!hasUploads) appendLog('No documents — evaluating proposal text only');
+
+    const res = await fetch('/api/evaluate/stream', { method: 'POST', body: formData });
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      renderProcessing(data.processing || [{ status: 'Failed / verification unavailable' }], data.documents || []);
+      renderProcessingFinal(data.processing || [], data.documents || []);
       updateVerificationCard(data.verification || {});
       throw new Error(data.error || `Evaluation request failed (HTTP ${res.status}).`);
     }
+
     const streamEvent = await readEvaluationStream(res);
     const data = streamEvent.result;
-    if (streamEvent.statusCode >= 400) {
-      renderProcessing(data.processing || [], data.documents || []);
-      updateVerificationCard(data.verification || {});
-      throw new Error(data.error || 'Evaluation request failed.');
-    }
-    if (!data || !Array.isArray(data.vendors)) {
-      throw new Error('Evaluation response was malformed.');
+    renderProcessingFinal(data.processing || [], data.documents || []);
+    updateVerificationCard(data.verification || {});
+
+    if (streamEvent.statusCode >= 400 || !data || !Array.isArray(data.vendors)) {
+      throw new Error(data?.error || 'Evaluation request failed.');
     }
 
-    updateVerificationCard(data.verification || {});
-    renderProcessing(data.processing || [], data.documents || []);
-    renderRankings(data.vendors);
-    renderVendorDetails(data.vendors);
-    updateSummary(data);
+    renderResults(data);
     recordSessionEvaluation(data);
-    retryButton.hidden = false;
-    switchTab('verification');
+    toast(`Evaluation complete — ${data.summary?.winner || 'winner'} recommended.`, 'success');
+    switchView('results');
   } catch (error) {
     updateVerificationCard({
       mode: 'error',
@@ -545,26 +955,20 @@ const handleEvaluate = async () => {
       gatewayVerified: false,
       modelVerified: false,
     });
-    if (!el('processingDetails').children.length) {
-      setCurrentProcessing('Failed / verification unavailable');
-    }
-    el('winnerName').textContent = 'Evaluation failed';
-    el('averageScore').textContent = '—';
-    el('modelName').textContent = '—';
-    el('vendorDetails').innerHTML = '';
-    const failure = document.createElement('p');
-    failure.className = 'empty-state';
-    failure.textContent = error.message;
-    el('vendorDetails').appendChild(failure);
-    retryButton.hidden = false;
-    switchTab('verification');
+    if (!el('processingDetails').children.length) appendLog('Failed / verification unavailable');
+    el('resultsEmpty').hidden = false;
+    el('resultsContent').hidden = true;
+    el('resultsBadge').hidden = true;
+    toast(error.message, 'error');
+    switchView('verification');
   } finally {
+    evaluating = false;
     button.disabled = false;
-    button.textContent = 'Evaluate bids';
+    button.textContent = 'Run evaluation';
   }
 };
 
-/* ---------- Init ---------- */
+/* ================= Init ================= */
 
 window.addEventListener('DOMContentLoaded', () => {
   updateVerificationCard({ state: 'WAITING', status: 'Waiting for evaluation.' });
@@ -573,23 +977,45 @@ window.addEventListener('DOMContentLoaded', () => {
   renderSessionActivity();
   renderHistory();
 
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  document.querySelectorAll('.nav-item').forEach((item) => {
+    item.addEventListener('click', () => switchView(item.dataset.view));
   });
+  el('menuBtn').addEventListener('click', () => {
+    el('sidebar').classList.contains('open') ? closeSidebar() : openSidebar();
+  });
+  el('sidebarScrim').addEventListener('click', closeSidebar);
+
+  el('ctaEvaluate').addEventListener('click', () => switchView('evaluate'));
+  el('ctaEvaluate2').addEventListener('click', () => switchView('evaluate'));
+  el('ctaEvaluate3').addEventListener('click', () => switchView('evaluate'));
+  el('ctaDemo').addEventListener('click', () => { loadDemo(); switchView('evaluate'); });
+  el('ctaVerify').addEventListener('click', () => switchView('verification'));
 
   el('loadDemo').addEventListener('click', loadDemo);
   el('addVendor').addEventListener('click', () => {
     const container = el('vendorList');
     if (container.children.length >= LIMITS.maxVendors) {
-      showFormErrors([`At most ${LIMITS.maxVendors} vendors are allowed.`]);
+      showFormErrors([`At most ${LIMITS.maxVendors} bidders are allowed.`]);
       return;
     }
     const wrapper = document.createElement('div');
-    wrapper.innerHTML = createVendorCard('', '', '', []);
+    wrapper.innerHTML = createVendorCard('', '', '');
     const newCard = wrapper.firstElementChild;
     container.appendChild(newCard);
     bindVendorCard(newCard);
+    updateReadiness();
+    newCard.querySelector('.vendor-name').focus();
   });
+
   el('evaluateButton').addEventListener('click', handleEvaluate);
-  el('retryButton').addEventListener('click', handleEvaluate);
+  el('downloadReport').addEventListener('click', downloadReport);
+
+  el('historySearch').addEventListener('input', renderHistory);
+  el('historyFilter').addEventListener('change', renderHistory);
+  el('historyClear').addEventListener('click', () => {
+    sessionEvaluations.length = 0;
+    renderSessionActivity();
+    renderHistory();
+    toast('Session history cleared.', 'info');
+  });
 });
