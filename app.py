@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import re
-import secrets
 import tempfile
 import queue
 import threading
@@ -11,9 +10,10 @@ from typing import Any, Callable
 
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
-from nearai_inference_sdk import InferenceClient
 from pypdf import PdfReader
 from werkzeug.datastructures import FileStorage
+
+import near_ai
 
 load_dotenv()
 
@@ -28,8 +28,8 @@ DEFAULT_WEIGHTS = {
     "eligibility_and_documentation": 0.10,
 }
 
-MODEL_NAME = "z-ai/glm-5.3-flash"
-LIVE_API_URL = "https://cloud-api.near.ai/v1"
+MODEL_NAME = near_ai.configured_model()
+LIVE_API_URL = near_ai.LIVE_API_URL
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MAX_EXTRACTED_CHARACTERS_PER_DOCUMENT = 2_000_000
 MAX_TOTAL_EXTRACTED_CHARACTERS = 10_000_000
@@ -51,7 +51,7 @@ class EvaluationServiceError(Exception):
 
 
 def generate_nonce() -> str:
-    return secrets.token_hex(16)
+    return near_ai.generate_nonce()
 
 
 def parse_json_blob(content: str) -> Any:
@@ -182,46 +182,32 @@ async def call_near_ai(
     nonce: str,
     on_verifying: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    api_key = os.getenv("NEARAI_API_KEY")
-    if not api_key:
-        raise EvaluationServiceError("NEAR AI Cloud is not configured.", 503)
-
-    async with InferenceClient(api_key, base_url=LIVE_API_URL, e2ee=True) as client:
-        completion = await client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a procurement evaluation assistant. Provide valid JSON only.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.1,
-        )
-        completion_text = completion.choices[0].message.content or ""
-        if on_verifying is not None:
+    def on_progress(stage: str) -> None:
+        if on_verifying is not None and stage in {
+            "attestation_pending",
+            "attestation_verify",
+            "signature_verify",
+        }:
             on_verifying()
-        verified_result = await client.verify_response(completion.id)
-        signature_kind = verified_result.signature_kind
-        model_verified = signature_kind == "provider_tee"
-        return {
-            "response": {"content": completion_text},
-            "verification": {
-                "mode": "live",
-                "model": MODEL_NAME,
-                "nonce": nonce,
-                "attestationVerified": model_verified,
-                "gatewayVerified": True,
-                "modelVerified": model_verified,
-                "responseSignatureKind": signature_kind,
-                "completionId": completion.id,
-                "status": (
-                    "Model TEE signature verified by NEAR AI SDK"
-                    if model_verified
-                    else "Gateway signature verified; model TEE execution is not proven"
-                ),
-            },
-        }
+
+    try:
+        result = await near_ai.run_verified_inference(
+            prompt,
+            nonce=nonce,
+            model=MODEL_NAME,
+            on_progress=on_progress,
+        )
+    except near_ai.NearAIUnavailableError as error:
+        raise EvaluationServiceError(str(error), error.status_code) from error
+    except near_ai.UnsupportedModelError as error:
+        raise EvaluationServiceError(str(error), error.status_code) from error
+    except near_ai.NearAIError as error:
+        raise EvaluationServiceError(str(error), error.status_code) from error
+
+    return {
+        "response": {"content": result.content},
+        "verification": result.verification,
+    }
 
 
 def compute_weighted_scores(vendors: list[dict[str, Any]], weights: dict[str, float]) -> list[dict[str, Any]]:
@@ -470,11 +456,14 @@ def process_evaluation(
 
             result = asyncio.run(evaluate_bids(payload, mark_verifying))
             verification = result.get("verification") or {}
-            if not verification.get("attestationVerified"):
+            state = verification.get("state")
+            if state == near_ai.STATE_GATEWAY_ONLY:
                 verification["status"] = (
                     "Gateway signature verified; model TEE execution is not proven"
-                    if verification.get("responseSignatureKind") == "gateway"
-                    else "TEE verification unavailable"
+                )
+            elif state == near_ai.STATE_MODEL_TEE_VERIFIED:
+                verification["status"] = (
+                    "Model TEE signature verified by the official NEAR AI Inference SDK."
                 )
             emit("evaluation_completed", "Evaluation completed")
     except DocumentInputError as error:
@@ -519,14 +508,14 @@ def process_evaluation(
             "error": failure,
             "documents": document_statuses,
             "processing": processing,
-            "verification": {
-                "attestationVerified": False,
-                "gatewayVerified": False,
-                "modelVerified": False,
-                "responseSignatureKind": "unavailable",
-                "status": "TEE verification unavailable",
-                "model": MODEL_NAME,
-            },
+            "verification": near_ai.empty_verification(
+                state=near_ai.STATE_VERIFICATION_UNAVAILABLE
+                if response_status in {503, 504}
+                else near_ai.STATE_VERIFICATION_FAILED,
+                model=MODEL_NAME,
+                status="TEE verification unavailable",
+                failure_reason=failure,
+            ),
         }, response_status
 
     assert result is not None
@@ -550,6 +539,16 @@ def healthcheck():
         "model": MODEL_NAME,
         "teeMode": "live" if os.getenv("NEARAI_API_KEY") else "unconfigured",
         "apiConfigured": bool(os.getenv("NEARAI_API_KEY")),
+        "verificationStates": [
+            near_ai.STATE_WAITING,
+            near_ai.STATE_ATTESTATION_PENDING,
+            near_ai.STATE_ATTESTATION_VERIFIED,
+            near_ai.STATE_SIGNATURE_VERIFIED,
+            near_ai.STATE_MODEL_TEE_VERIFIED,
+            near_ai.STATE_GATEWAY_ONLY,
+            near_ai.STATE_VERIFICATION_FAILED,
+            near_ai.STATE_VERIFICATION_UNAVAILABLE,
+        ],
     })
 
 
@@ -613,13 +612,11 @@ def evaluate_stream_route():
         except Exception:
             result = {
                 "error": "Evaluation failed; verification is unavailable.",
-                "verification": {
-                    "attestationVerified": False,
-                    "gatewayVerified": False,
-                    "modelVerified": False,
-                    "responseSignatureKind": "unavailable",
-                    "status": "TEE verification unavailable",
-                },
+                "verification": near_ai.empty_verification(
+                    state=near_ai.STATE_VERIFICATION_UNAVAILABLE,
+                    status="TEE verification unavailable",
+                    failure_reason="Evaluation failed; verification is unavailable.",
+                ),
                 "processing": [
                     {"state": "failed", "status": "Failed / verification unavailable"},
                     {"state": "cleanup_completed", "status": "Cleanup completed"},
@@ -656,13 +653,11 @@ def request_too_large(_error):
             {"state": "failed", "status": "Failed / verification unavailable"},
             {"state": "cleanup_completed", "status": "Cleanup completed"},
         ],
-        "verification": {
-            "attestationVerified": False,
-            "gatewayVerified": False,
-            "modelVerified": False,
-            "responseSignatureKind": "unavailable",
-            "status": "Request rejected before evaluation.",
-        },
+        "verification": near_ai.empty_verification(
+            state=near_ai.STATE_VERIFICATION_UNAVAILABLE,
+            status="Request rejected before evaluation.",
+            failure_reason="The upload exceeds the 50 MB request limit.",
+        ),
     }), 413
 
 

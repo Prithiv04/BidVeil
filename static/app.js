@@ -91,34 +91,61 @@ const loadDemo = () => {
   document.getElementById('evaluationCriteria').value = 'Technical compliance, price competitiveness, relevant experience, delivery timeline, eligibility and documentation.';
 
   renderVendorCards([
-    { name: 'Northstar Systems', price: '820000', proposal: 'Secure migration architecture with strong governance and phased rollout. Includes data retention and system monitoring.' },
-    { name: 'Meridian Consulting', price: '740000', proposal: 'Cost-effective delivery with experience in public sector change programs and analytics modernization.' },
-    { name: 'Helio DataWorks', price: '910000', proposal: 'Strong technical depth with governance and analytics integration; slightly higher cost and longer timeline.' },
+    { name: 'Northstar Systems', price: '740000', proposal: 'Fictional Vendor A: lower quotation with moderate technical compliance, phased migration, and a 10-month delivery window. Sample file: samples/vendor-a-northstar.txt.' },
+    { name: 'Meridian Consulting', price: '910000', proposal: 'Fictional Vendor B: higher quotation with excellent technical compliance, SOC 2 controls, comparable deployments, and a 7-month delivery window. Sample file: samples/vendor-b-meridian.txt.' },
+    { name: 'Helio DataWorks', price: '820000', proposal: 'Fictional Vendor C: competitive quotation with incomplete documentation and missing security certification evidence. Sample file: samples/vendor-c-helio.txt.' },
   ]);
+};
+
+const verificationBadgeClass = (state) => {
+  if (state === 'MODEL_TEE_VERIFIED') return 'success';
+  if (state === 'VERIFICATION_FAILED') return 'danger';
+  if (state === 'GATEWAY_ONLY' || state === 'SIGNATURE_VERIFIED' || state === 'ATTESTATION_VERIFIED' || state === 'ATTESTATION_PENDING') {
+    return 'warning';
+  }
+  return 'neutral';
 };
 
 const updateVerificationCard = (verification = {}) => {
   const badge = document.getElementById('verificationBadge');
   const list = document.getElementById('verificationDetails');
-  const { attestationVerified, gatewayVerified, modelVerified, responseSignatureKind, status } = verification;
+  const signatureKind = verification.responseSignatureKind || verification.signatureType || 'unavailable';
+  const modelTee = verification.state === 'MODEL_TEE_VERIFIED'
+    && verification.modelVerified === true
+    && signatureKind === 'provider_tee';
+  const state = verification.state
+    || (modelTee ? 'MODEL_TEE_VERIFIED' : signatureKind === 'gateway' ? 'GATEWAY_ONLY' : 'WAITING');
 
-  const verified = verification.mode === 'live'
-    && attestationVerified === true
-    && modelVerified === true
-    && responseSignatureKind === 'provider_tee';
-  badge.textContent = verified
-    ? 'Model TEE verified'
-    : responseSignatureKind === 'gateway'
-      ? 'Gateway only'
-      : 'Verification unavailable';
-  badge.className = `badge ${verified ? 'success' : 'warning'}`;
+  badge.textContent = state;
+  badge.className = `badge ${verificationBadgeClass(state)}`;
 
+  const evidence = Array.isArray(verification.evidenceIds) && verification.evidenceIds.length
+    ? verification.evidenceIds.join(', ')
+    : 'none reported';
+  const unavailable = Array.isArray(verification.unavailableChecks) && verification.unavailableChecks.length
+    ? verification.unavailableChecks.join(' ')
+    : 'none';
   const rows = [
-    `Gateway attestation: ${gatewayVerified === true ? 'verified by SDK' : 'not reported'}`,
-    `Model TEE attestation: ${verified ? 'verified' : 'not proven'}`,
-    `Response signature: ${responseSignatureKind || 'unavailable'}`,
-    `Status: ${status || 'Awaiting run'}`,
+    `Verification status: ${state}`,
+    `Selected model: ${verification.model || 'pending'}`,
+    `Model identity: ${verification.modelIdentity || 'not reported'}`,
+    `Attestation: ${verification.attestationStatus || (verification.gatewayVerified ? 'gateway checked' : 'pending')}`,
+    `Nonce verification: ${verification.nonceVerified === true ? 'matched' : 'not verified'}`,
+    `Nonce: ${verification.nonce || 'not reported'}`,
+    `Signature verification: ${verification.signatureVerified === true ? 'verified' : 'not verified'}`,
+    `Signature type: ${signatureKind}`,
+    `Hash verification: ${verification.hashVerified === true ? 'signed payload parsed' : 'not verified'}`,
+    `Request hash: ${verification.requestHash || 'not reported'}`,
+    `Response hash: ${verification.responseHash || 'not reported'}`,
+    `Verification timestamp: ${verification.verifiedAt || 'not reported'}`,
+    `Evidence identifiers: ${evidence}`,
+    `GPU evidence: ${verification.gpuEvidence || 'unavailable'}`,
+    `Unavailable checks: ${unavailable}`,
+    `Failure explanation: ${verification.failureReason || verification.status || 'none'}`,
   ];
+  if (signatureKind === 'gateway' || state === 'GATEWAY_ONLY') {
+    rows.push('Note: A gateway signature is not proof of model-level TEE execution.');
+  }
   list.replaceChildren(...rows.map((row) => {
     const item = document.createElement('li');
     item.textContent = row;
@@ -271,7 +298,16 @@ const handleEvaluate = async () => {
     renderVendorDetails(data.vendors);
     updateSummary(data);
   } catch (error) {
-    updateVerificationCard({ mode: 'error', status: error.message, responseSignatureKind: 'unavailable', attestationVerified: false, gatewayVerified: false, modelVerified: false });
+    updateVerificationCard({
+      mode: 'error',
+      state: 'VERIFICATION_FAILED',
+      status: error.message,
+      failureReason: error.message,
+      responseSignatureKind: 'unavailable',
+      attestationVerified: false,
+      gatewayVerified: false,
+      modelVerified: false,
+    });
     if (!document.getElementById('processingDetails').children.length) {
       setCurrentProcessing('Failed / verification unavailable');
     }
@@ -289,6 +325,7 @@ const handleEvaluate = async () => {
 };
 
 window.addEventListener('DOMContentLoaded', () => {
+  updateVerificationCard({ state: 'WAITING', status: 'Waiting for evaluation.' });
   loadDemo();
   document.getElementById('loadDemo').addEventListener('click', loadDemo);
   document.getElementById('addVendor').addEventListener('click', () => {

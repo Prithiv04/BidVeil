@@ -300,6 +300,8 @@ textarea {
   display: grid;
   gap: 8px;
   color: var(--muted);
+  font-size: 0.82rem;
+  word-break: break-word;
 }
 
 .summary-grid {

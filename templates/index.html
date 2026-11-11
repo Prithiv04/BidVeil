@@ -86,7 +86,7 @@
               <li>Documents are uploaded to BIDVEIL for this evaluation.</li>
               <li>Readable text is extracted in request-scoped processing.</li>
               <li>Bid text is sent to NEAR AI Cloud for analysis.</li>
-              <li>TEE verification is marked verified only after the SDK validates a provider TEE response signature.</li>
+              <li>Model TEE verification is shown only after the official SDK validates a provider_tee signature. A gateway signature is never treated as model TEE proof.</li>
               <li>Temporary server-side files are removed after the request, including failures.</li>
               <li>BIDVEIL does not intentionally persist uploaded files or extracted bid text.</li>
             </ol>
@@ -99,15 +99,22 @@
             </div>
           </div>
 
-          <div class="verification-box">
+          <div class="verification-box" id="verificationCenter">
             <div class="verification-header">
-              <span>Verification status</span>
-              <span id="verificationBadge" class="badge neutral">Awaiting run</span>
+              <span>Verification Center</span>
+              <span id="verificationBadge" class="badge neutral">WAITING</span>
             </div>
             <ul id="verificationDetails" class="verification-list">
-              <li>Gateway attestation: pending</li>
-              <li>Model TEE attestation: pending</li>
-              <li>Response signature: pending</li>
+              <li>Verification status: WAITING</li>
+              <li>Selected model: pending</li>
+              <li>Model identity: pending</li>
+              <li>Attestation: pending</li>
+              <li>Nonce: pending</li>
+              <li>Signature: pending</li>
+              <li>Signature type: pending</li>
+              <li>Hash: pending</li>
+              <li>Verified at: pending</li>
+              <li>Evidence identifiers: pending</li>
             </ul>
           </div>
 
