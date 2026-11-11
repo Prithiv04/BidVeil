@@ -20,6 +20,46 @@ For each evaluation, the server writes uploads using generated names inside a un
 
 Limits: 10 MB per document, 2 million extracted characters per document, 10 million extracted characters per request, 1,000 PDF pages per document, 10 documents per vendor, 20 vendors, and 50 MB per HTTP request. Only PDF and UTF-8 TXT are supported; scanned/image-only PDFs without an OCR text layer are rejected as text-empty.
 
+## Architecture
+
+```text
+Browser (Flask template + vanilla JS)
+   |  multipart POST /api/evaluate/stream  (SSE progress events)
+   v
+app.py  process_evaluation()
+   |-- validate uploads (extension, MIME, size, PDF structure, UTF-8)
+   |-- write to unique request-scoped TemporaryDirectory (bidveil-*)
+   |-- extract text (pypdf / UTF-8 decode) -> in-memory only
+   |-- generate fresh 32-byte nonce (hex)
+   |-- build evaluation prompt (tender + extracted bid text + nonce)
+   v
+near_ai.py  run_verified_inference()   [official order]
+   |-- resolve_tee_model(): GET /v1/models + AttestationClient metadata
+   |     (rejects models without attestation_supported + provider_type=vllm)
+   |-- GET /v1/attestation/report?model=&provider=near&signing_algo=ed25519&nonce=
+   |-- verify_attestation_nonce(): gateway + model + nvidia_payload nonce binding
+   |-- InferenceClient(e2ee=True, signing_algo=ed25519, ttl=0)
+   |     .verify(model)          -> SDK attestation verification
+   |     .chat.completions.create -> real inference
+   |     .verify_response(id)    -> SDK signature + request/response hash check
+   v
+Verification object -> app.py -> deterministic weighted scoring -> SSE result
+   |
+   +-- TemporaryDirectory removed on success AND every failure path
+   +-- upload streams closed; extracted text never persisted
+```
+
+Verification states: `WAITING`, `ATTESTATION_PENDING`, `ATTESTATION_VERIFIED`, `SIGNATURE_VERIFIED`, `MODEL_TEE_VERIFIED`, `GATEWAY_ONLY`, `VERIFICATION_FAILED`, `VERIFICATION_UNAVAILABLE`. `MODEL_TEE_VERIFIED` is shown only when the official SDK verifies a `provider_tee` signature; a `gateway` signature is reported as `GATEWAY_ONLY` and never as model TEE proof.
+
+## Judge demo workflow (fictional vendors)
+
+1. `python app.py` then open `http://127.0.0.1:8000/`.
+2. Click **Load demo** — three fictional vendors (Northstar Systems: lower price/moderate compliance; Meridian Consulting: higher price/excellent compliance; Helio DataWorks: competitive price/incomplete documentation).
+3. Optionally attach the sample TXT files referenced in the demo proposals.
+4. Click **Evaluate bids** — watch Processing status stream extraction -> preparation -> attestation verification -> completion -> cleanup.
+5. Inspect the **Verification Center**: it shows the real state, model, nonce binding, signature type, hashes, evidence IDs, and failure reason. If NEAR AI Cloud billing is not configured, the state will be `VERIFICATION_UNAVAILABLE` with the provider's error — this is the honest result, not a mock.
+6. Rankings and per-vendor evidence come from the deterministic weighted scoring engine; the AI only extracts structured evidence, never final scores.
+
 ## Privacy boundaries
 
 - BIDVEIL does not intentionally persist uploaded documents, extracted bid text, prompts, or model responses in a database, application files, or logs.
@@ -70,7 +110,9 @@ python -m pytest -q
 
 ## Existing TEE smoke test
 
-With a configured key, `python scripts/tee_smoke_test.py` runs the separate NEAR AI Cloud smoke test. It is not a local mock mode.
+With a configured key, `python scripts/tee_smoke_test.py` runs the separate NEAR AI Cloud smoke test against the live API. It is not a local mock mode and must not be counted as TEE proof unless it exits 0.
+
+Current live status (last run): model discovery (63 models), TEE-model resolution (`z-ai/glm-5.3-flash`, provider_type `vllm`, attestation_supported), fresh nonce generation, attestation report retrieval, and nonce binding all pass. Inference is currently blocked by the NEAR AI Cloud account returning HTTP 402 ("No spending limit configured"); the script reports `VERIFICATION_UNAVAILABLE` and exits non-zero until billing/credits are configured. Response-signature and model-level TEE verification have therefore not yet been exercised against live inference.
 
 ## References
 

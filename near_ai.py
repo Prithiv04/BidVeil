@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 import httpx
+import openai
 from nearai_inference_sdk import (
     ApiError,
     AttestationClient,
@@ -294,7 +295,7 @@ def verify_attestation_nonce(report: dict[str, Any], nonce: str) -> dict[str, An
     """Confirm the client nonce is echoed, then bind it with the official SDK helper."""
     gateway = report.get("gateway_attestation") or {}
     model_reports = report.get("model_attestations") or []
-    if not isinstance(gateway, dict):
+    if not isinstance(gateway, dict) or not gateway:
         raise NearAIError("Gateway attestation evidence is missing.")
     if not isinstance(model_reports, list) or not model_reports:
         raise UnsupportedModelError(
@@ -325,6 +326,18 @@ def verify_attestation_nonce(report: dict[str, Any], nonce: str) -> dict[str, An
         "modelCandidateCount": len(model_reports),
         "checkedCandidates": index + 1 if model_reports else 0,
     }
+
+
+def _provider_error_message(error: openai.APIStatusError) -> str:
+    """Extract the provider's error message; never includes request credentials."""
+    try:
+        body = error.response.json()
+        message = (body.get("error") or {}).get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()[:300]
+    except Exception:
+        pass
+    return f"HTTP {error.status_code} from NEAR AI Cloud."
 
 
 def _signer_identity(value: Any) -> str | None:
@@ -430,10 +443,28 @@ async def run_verified_inference(
             status,
             state,
         ) from error
+    except openai.APIStatusError as error:
+        provider_message = _provider_error_message(error)
+        if error.status_code in {402, 429} or error.status_code >= 500:
+            raise NearAIUnavailableError(
+                f"NEAR AI Cloud inference is unavailable: {provider_message}",
+                503,
+            ) from error
+        raise NearAIError(
+            f"NEAR AI Cloud inference failed: {provider_message}",
+            error.status_code if 400 <= error.status_code < 600 else 502,
+            STATE_VERIFICATION_FAILED,
+        ) from error
+    except (openai.APIConnectionError, openai.APITimeoutError) as error:
+        raise NearAIUnavailableError(
+            "NEAR AI Cloud inference could not be reached.", 503
+        ) from error
     except httpx.TimeoutException as error:
         raise NearAIUnavailableError("NEAR AI Cloud inference timed out.", 504) from error
     except Exception as error:
-        raise NearAIError("NEAR AI Cloud inference failed.") from error
+        raise NearAIError(
+            f"NEAR AI Cloud inference failed ({type(error).__name__})."
+        ) from error
 
     signature_kind = verified.signature_kind
     signed_text = verified.signature.signed_text
