@@ -7,6 +7,7 @@ from pypdf import PdfWriter
 from werkzeug.datastructures import FileStorage
 
 import app as bidveil
+import near_ai
 
 
 def make_text_pdf(text: str = "Readable bid proposal text") -> bytes:
@@ -359,4 +360,21 @@ def test_health_endpoint_reports_service_configuration(monkeypatch):
     response = bidveil.app.test_client().get("/api/health")
 
     assert response.status_code == 200
-    assert response.get_json()["teeMode"] == "unconfigured"
+    body = response.get_json()
+    assert body["teeMode"] == "unconfigured"
+    assert body["apiConfigured"] is False
+    assert body["status"] == "ok"
+    assert isinstance(body["model"], str) and body["model"]
+    assert isinstance(body["verificationStates"], list)
+    assert near_ai.STATE_MODEL_TEE_VERIFIED in body["verificationStates"]
+    assert near_ai.STATE_VERIFICATION_UNAVAILABLE in body["verificationStates"]
+
+
+def test_health_endpoint_reports_configured_key(monkeypatch):
+    monkeypatch.setenv("NEARAI_API_KEY", "test-key")
+    response = bidveil.app.test_client().get("/api/health")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["apiConfigured"] is True
+    assert body["teeMode"] == "live"

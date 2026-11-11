@@ -6,6 +6,16 @@ const defaultWeights = {
   eligibility_and_documentation: 0.1,
 };
 
+const LIMITS = {
+  maxFileBytes: 10 * 1024 * 1024,
+  maxFilesPerVendor: 10,
+  maxVendors: 20,
+  allowedExtensions: ['.pdf', '.txt'],
+};
+
+const sessionEvaluations = [];
+let lastPayload = null;
+
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -14,16 +24,31 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character
   "'": '&#39;',
 }[character]));
 
+const el = (id) => document.getElementById(id);
+
+/* ---------- Tabs ---------- */
+
+const switchTab = (name) => {
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.tab === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === `tab-${name}`);
+  });
+};
+
+/* ---------- Vendor cards ---------- */
+
 const createVendorCard = (name = '', price = '', proposal = '', files = []) => `
   <div class="vendor-card">
     <div class="vendor-card-header">
-      <input class="vendor-name" value="${escapeHtml(name)}" placeholder="Vendor name" />
+      <input class="vendor-name" value="${escapeHtml(name)}" placeholder="Vendor name" aria-label="Vendor name" />
       <button class="ghost remove-vendor" type="button">Remove</button>
     </div>
     <div class="two-col">
       <div class="field-group">
         <label>Quoted price</label>
-        <input class="vendor-price" type="number" value="${escapeHtml(price)}" placeholder="250000" />
+        <input class="vendor-price" type="number" min="0" value="${escapeHtml(price)}" placeholder="250000" />
       </div>
       <div class="field-group">
         <label>Proposal summary</label>
@@ -38,17 +63,45 @@ const createVendorCard = (name = '', price = '', proposal = '', files = []) => `
   </div>
 `;
 
+const bindVendorCard = (card) => {
+  const remove = card.querySelector('.remove-vendor');
+  if (remove) {
+    remove.addEventListener('click', () => {
+      const container = el('vendorList');
+      if (container.children.length > 1) card.remove();
+    });
+  }
+  const fileInput = card.querySelector('.vendor-files');
+  if (fileInput) {
+    fileInput.addEventListener('change', (event) => {
+      const names = Array.from(event.target.files || []).map((file) => file.name);
+      const fileLabel = card.querySelector('.uploaded-files');
+      if (fileLabel) {
+        fileLabel.textContent = names.length
+          ? names.join(', ')
+          : 'No files selected; text summary will be used for evaluation.';
+      }
+    });
+  }
+};
+
+const renderVendorCards = (vendors) => {
+  const container = el('vendorList');
+  container.innerHTML = vendors.map((vendor) => createVendorCard(vendor.name, vendor.price, vendor.proposal, vendor.files || [])).join('');
+  container.querySelectorAll('.vendor-card').forEach(bindVendorCard);
+};
+
 const getFormState = () => {
   const cards = Array.from(document.querySelectorAll('.vendor-card'));
   return {
     tender: {
-      title: document.getElementById('tenderTitle').value,
-      description: document.getElementById('tenderDescription').value,
-      maximumBudget: Number(document.getElementById('maximumBudget').value || 0),
-      deadline: document.getElementById('submissionDeadline').value,
-      eligibilityRequirements: document.getElementById('eligibilityRequirements').value,
-      technicalRequirements: document.getElementById('technicalRequirements').value,
-      evaluationCriteria: document.getElementById('evaluationCriteria').value,
+      title: el('tenderTitle').value,
+      description: el('tenderDescription').value,
+      maximumBudget: Number(el('maximumBudget').value || 0),
+      deadline: el('submissionDeadline').value,
+      eligibilityRequirements: el('eligibilityRequirements').value,
+      technicalRequirements: el('technicalRequirements').value,
+      evaluationCriteria: el('evaluationCriteria').value,
       weights: defaultWeights,
     },
     bids: cards.map((card) => ({
@@ -59,36 +112,14 @@ const getFormState = () => {
   };
 };
 
-const renderVendorCards = (vendors) => {
-  const container = document.getElementById('vendorList');
-  container.innerHTML = vendors.map((vendor) => createVendorCard(vendor.name, vendor.price, vendor.proposal, vendor.files || [])).join('');
-
-  container.querySelectorAll('.remove-vendor').forEach((button) => {
-    button.addEventListener('click', () => {
-      const card = button.closest('.vendor-card');
-      if (container.children.length > 1) {
-        card.remove();
-      }
-    });
-  });
-
-  container.querySelectorAll('.vendor-files').forEach((input) => {
-    input.addEventListener('change', (event) => {
-      const names = Array.from(event.target.files || []).map((file) => file.name);
-      const fileLabel = input.parentElement.querySelector('.uploaded-files');
-      fileLabel.textContent = names.length ? names.join(', ') : 'No files selected; text summary will be used for evaluation.';
-    });
-  });
-};
-
 const loadDemo = () => {
-  document.getElementById('tenderTitle').value = 'Modern Secure Government Data Platform';
-  document.getElementById('tenderDescription').value = 'Procurement for a secure government data platform with migration, governance, and modernization requirements.';
-  document.getElementById('maximumBudget').value = '1000000';
-  document.getElementById('submissionDeadline').value = '2026-12-31';
-  document.getElementById('eligibilityRequirements').value = 'Vendor must have three comparable public sector modernizations and valid security certifications.';
-  document.getElementById('technicalRequirements').value = 'Need secure integration, RBAC, encrypted data transport, monitoring, and phased rollout.';
-  document.getElementById('evaluationCriteria').value = 'Technical compliance, price competitiveness, relevant experience, delivery timeline, eligibility and documentation.';
+  el('tenderTitle').value = 'Modern Secure Government Data Platform';
+  el('tenderDescription').value = 'Procurement for a secure government data platform with migration, governance, and modernization requirements.';
+  el('maximumBudget').value = '1000000';
+  el('submissionDeadline').value = '2026-12-31';
+  el('eligibilityRequirements').value = 'Vendor must have three comparable public sector modernizations and valid security certifications.';
+  el('technicalRequirements').value = 'Need secure integration, RBAC, encrypted data transport, monitoring, and phased rollout.';
+  el('evaluationCriteria').value = 'Technical compliance, price competitiveness, relevant experience, delivery timeline, eligibility and documentation.';
 
   renderVendorCards([
     { name: 'Northstar Systems', price: '740000', proposal: 'Fictional Vendor A: lower quotation with moderate technical compliance, phased migration, and a 10-month delivery window. Sample file: samples/vendor-a-northstar.txt.' },
@@ -97,18 +128,80 @@ const loadDemo = () => {
   ]);
 };
 
-const verificationBadgeClass = (state) => {
-  if (state === 'MODEL_TEE_VERIFIED') return 'success';
-  if (state === 'VERIFICATION_FAILED') return 'danger';
-  if (state === 'GATEWAY_ONLY' || state === 'SIGNATURE_VERIFIED' || state === 'ATTESTATION_VERIFIED' || state === 'ATTESTATION_PENDING') {
-    return 'warning';
+/* ---------- Client-side validation ---------- */
+
+const validateForm = () => {
+  const errors = [];
+  const cards = Array.from(document.querySelectorAll('.vendor-card'));
+
+  if (!cards.length) errors.push('At least one vendor is required.');
+  if (cards.length > LIMITS.maxVendors) {
+    errors.push(`At most ${LIMITS.maxVendors} vendors are allowed (found ${cards.length}).`);
   }
-  return 'neutral';
+
+  cards.forEach((card, index) => {
+    const label = card.querySelector('.vendor-name').value || `Vendor ${index + 1}`;
+    const files = Array.from(card.querySelector('.vendor-files').files || []);
+    if (files.length > LIMITS.maxFilesPerVendor) {
+      errors.push(`${label}: at most ${LIMITS.maxFilesPerVendor} documents per vendor (found ${files.length}).`);
+    }
+    files.forEach((file) => {
+      const ext = `.${(file.name.split('.').pop() || '').toLowerCase()}`;
+      if (!LIMITS.allowedExtensions.includes(ext)) {
+        errors.push(`${label}: "${file.name}" is not a supported type (PDF or TXT only).`);
+      }
+      if (file.size > LIMITS.maxFileBytes) {
+        errors.push(`${label}: "${file.name}" exceeds the 10 MB per-document limit.`);
+      }
+      if (file.size === 0) {
+        errors.push(`${label}: "${file.name}" is empty.`);
+      }
+    });
+  });
+
+  const budget = Number(el('maximumBudget').value || 0);
+  if (budget < 0) errors.push('Maximum budget cannot be negative.');
+
+  return errors;
+};
+
+const showFormErrors = (errors) => {
+  const box = el('formErrors');
+  if (!errors.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = `<strong>Fix the following before evaluating:</strong><ul>${errors.map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`;
+};
+
+/* ---------- Health / overview ---------- */
+
+const verificationExplanationFor = (state, verification = {}) => {
+  switch (state) {
+    case 'MODEL_TEE_VERIFIED':
+      return 'The official NEAR AI Inference SDK verified a provider_tee signature: the attestation report was nonce-bound, the model attestation was verified, and the response signature was verified against the retained request and response bytes. This is the strongest verification BIDVEIL reports.';
+    case 'GATEWAY_ONLY':
+      return 'A gateway signature was verified by the SDK, proving the response passed through the verified NEAR AI gateway. The signature kind was gateway, not provider_tee, so model-level TEE execution is NOT proven.';
+    case 'SIGNATURE_VERIFIED':
+    case 'ATTESTATION_VERIFIED':
+      return 'Partial verification completed. See the details below for which checks passed and which are unavailable.';
+    case 'VERIFICATION_FAILED':
+      return 'A cryptographic verification check failed. The evaluation result is not trustworthy and should not be used.';
+    case 'VERIFICATION_UNAVAILABLE':
+      return 'Verification could not be performed — typically a provider-side issue such as billing (HTTP 402), connectivity, or timeout. No verification claims are made.';
+    case 'ATTESTATION_PENDING':
+      return 'Attestation verification is in progress.';
+    default:
+      return verification.status || 'Waiting for evaluation.';
+  }
 };
 
 const updateVerificationCard = (verification = {}) => {
-  const badge = document.getElementById('verificationBadge');
-  const list = document.getElementById('verificationDetails');
+  const badge = el('verificationBadge');
+  const list = el('verificationDetails');
+  const explanation = el('verificationExplanation');
   const signatureKind = verification.responseSignatureKind || verification.signatureType || 'unavailable';
   const modelTee = verification.state === 'MODEL_TEE_VERIFIED'
     && verification.modelVerified === true
@@ -118,6 +211,7 @@ const updateVerificationCard = (verification = {}) => {
 
   badge.textContent = state;
   badge.className = `badge ${verificationBadgeClass(state)}`;
+  explanation.textContent = verificationExplanationFor(state, verification);
 
   const evidence = Array.isArray(verification.evidenceIds) && verification.evidenceIds.length
     ? verification.evidenceIds.join(', ')
@@ -154,10 +248,30 @@ const updateVerificationCard = (verification = {}) => {
     item.textContent = row;
     return item;
   }));
+
+  const notice = el('verificationUnavailable');
+  if (state === 'VERIFICATION_UNAVAILABLE' || state === 'VERIFICATION_FAILED') {
+    notice.hidden = false;
+    el('verificationUnavailableText').textContent = verification.failureReason || verification.status || '';
+  } else {
+    notice.hidden = true;
+  }
 };
 
+const verificationBadgeClass = (state) => {
+  if (state === 'MODEL_TEE_VERIFIED') return 'success';
+  if (state === 'VERIFICATION_FAILED') return 'danger';
+  if (state === 'VERIFICATION_UNAVAILABLE') return 'warning';
+  if (state === 'GATEWAY_ONLY' || state === 'SIGNATURE_VERIFIED' || state === 'ATTESTATION_VERIFIED' || state === 'ATTESTATION_PENDING') {
+    return 'warning';
+  }
+  return 'neutral';
+};
+
+/* ---------- Processing / results rendering ---------- */
+
 const renderProcessing = (processing = [], documents = []) => {
-  const list = document.getElementById('processingDetails');
+  const list = el('processingDetails');
   const entries = [
     ...processing.map((item) => item.status),
     ...documents.map((document) => `${document.fileName}: ${document.status}${document.message ? ` — ${document.message}` : ''}`),
@@ -170,7 +284,7 @@ const renderProcessing = (processing = [], documents = []) => {
 };
 
 const setCurrentProcessing = (state, append = false) => {
-  const list = document.getElementById('processingDetails');
+  const list = el('processingDetails');
   const item = document.createElement('li');
   item.textContent = state;
   if (append) {
@@ -211,7 +325,11 @@ const readEvaluationStream = async (response) => {
 };
 
 const renderRankings = (vendors = []) => {
-  const tbody = document.getElementById('rankingsBody');
+  const tbody = el('rankingsBody');
+  if (!vendors.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">No vendors returned.</td></tr>';
+    return;
+  }
   tbody.innerHTML = vendors.map((vendor) => `
     <tr>
       <td>#${escapeHtml(vendor.rank)}</td>
@@ -224,7 +342,11 @@ const renderRankings = (vendors = []) => {
 };
 
 const renderVendorDetails = (vendors = []) => {
-  const details = document.getElementById('vendorDetails');
+  const details = el('vendorDetails');
+  if (!vendors.length) {
+    details.innerHTML = '<p class="empty-state">No vendor evidence returned.</p>';
+    return;
+  }
   details.innerHTML = vendors.map((vendor) => `
     <div class="evidence-card">
       <h3>${escapeHtml(vendor.rank)}. ${escapeHtml(vendor.vendorName)}</h3>
@@ -250,21 +372,130 @@ const updateSummary = (response) => {
   const average = response?.summary?.averageScore ?? '—';
   const model = response?.verification?.model || '—';
 
-  document.getElementById('winnerName').textContent = winner;
-  document.getElementById('averageScore').textContent = typeof average === 'number' ? `${average} / 100` : average;
-  document.getElementById('modelName').textContent = model;
+  el('winnerName').textContent = winner;
+  el('averageScore').textContent = typeof average === 'number' ? `${average} / 100` : average;
+  el('modelName').textContent = model;
 };
 
+/* ---------- Session history & overview ---------- */
+
+const recordSessionEvaluation = (data) => {
+  const verification = data.verification || {};
+  const state = verification.state || 'UNKNOWN';
+  const winner = data.summary?.winner || '—';
+  const average = data.summary?.averageScore;
+  const tenderTitle = lastPayload?.tender?.title || 'Untitled tender';
+  const entry = {
+    timestamp: new Date(),
+    tenderTitle,
+    winner,
+    state,
+    averageScore: typeof average === 'number' ? average : null,
+    vendorCount: Array.isArray(data.vendors) ? data.vendors.length : 0,
+  };
+  sessionEvaluations.unshift(entry);
+  renderSessionActivity();
+  renderHistory();
+};
+
+const renderSessionActivity = () => {
+  el('ssCount').textContent = String(sessionEvaluations.length);
+  const latest = sessionEvaluations[0];
+  el('ssLastState').textContent = latest ? latest.state : '—';
+  el('ssLastWinner').textContent = latest ? latest.winner : '—';
+
+  const container = el('sessionActivity');
+  if (!sessionEvaluations.length) {
+    container.innerHTML = '<p class="empty-state">No evaluations have been run in this session.</p>';
+    return;
+  }
+  container.innerHTML = sessionEvaluations.slice(0, 5).map((entry) => `
+    <div class="activity-item">
+      <span class="activity-title">${escapeHtml(entry.tenderTitle)}</span>
+      <span class="activity-meta">${escapeHtml(entry.state)} · ${escapeHtml(entry.winner)} · ${entry.timestamp.toLocaleTimeString()}</span>
+    </div>
+  `).join('');
+};
+
+const renderHistory = () => {
+  const container = el('historyList');
+  if (!sessionEvaluations.length) {
+    container.innerHTML = '<p class="empty-state">No evaluations recorded yet. Completed evaluations will appear here for this session only.</p>';
+    return;
+  }
+  container.innerHTML = sessionEvaluations.map((entry) => `
+    <div class="activity-item">
+      <span class="activity-title">${escapeHtml(entry.tenderTitle)}</span>
+      <span class="activity-meta">${escapeHtml(entry.timestamp.toLocaleString())} · ${escapeHtml(entry.state)} · winner: ${escapeHtml(entry.winner)}${entry.averageScore !== null ? ` · avg ${entry.averageScore}` : ''} · ${entry.vendorCount} vendors</span>
+    </div>
+  `).join('');
+};
+
+const loadHealth = async () => {
+  const pill = el('serviceStatus');
+  const pillText = el('serviceStatusText');
+  try {
+    const res = await fetch('/api/health');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const health = await res.json();
+
+    const configured = health.apiConfigured === true;
+    const teeLive = health.teeMode === 'live';
+
+    el('ovApiStatus').textContent = health.status === 'ok' ? 'Operational' : 'Degraded';
+    el('ovTeeMode').textContent = teeLive ? 'Live (key configured)' : 'Unconfigured';
+    el('ovModel').textContent = health.model || '—';
+    el('ovStates').textContent = Array.isArray(health.verificationStates) ? String(health.verificationStates.length) : '—';
+
+    if (configured && teeLive) {
+      pill.className = 'status-pill status-ok';
+      pillText.textContent = 'NEAR AI Cloud connected';
+    } else if (configured) {
+      pill.className = 'status-pill status-degraded';
+      pillText.textContent = 'API key configured — verification limited';
+    } else {
+      pill.className = 'status-pill status-degraded';
+      pillText.textContent = 'NEARAI_API_KEY not configured';
+    }
+
+    el('ovHealthNote').textContent = configured
+      ? `Model: ${health.model}. TEE mode: ${health.teeMode}. ${Array.isArray(health.verificationStates) ? `${health.verificationStates.length} verification states supported.` : ''}`
+      : 'NEARAI_API_KEY is not set. Evaluations will fail with VERIFICATION_UNAVAILABLE until a key is configured.';
+
+    el('ovVerificationNote').textContent = teeLive
+      ? 'Live verification is configured. Whether model-level TEE is proven depends on the signature kind returned by the provider for each evaluation.'
+      : 'Live NEAR AI Cloud verification is not currently configured. The UI will report VERIFICATION_UNAVAILABLE honestly rather than simulating verification.';
+  } catch (error) {
+    pill.className = 'status-pill status-error';
+    pillText.textContent = 'Service unreachable';
+    el('ovApiStatus').textContent = 'Unreachable';
+    el('ovTeeMode').textContent = 'Unknown';
+    el('ovModel').textContent = '—';
+    el('ovStates').textContent = '—';
+    el('ovHealthNote').textContent = `Could not reach /api/health: ${error.message}`;
+    el('ovVerificationNote').textContent = 'Service status could not be determined.';
+  }
+};
+
+/* ---------- Evaluation ---------- */
+
 const handleEvaluate = async () => {
-  const button = document.getElementById('evaluateButton');
+  const button = el('evaluateButton');
+  const retryButton = el('retryButton');
+  const errors = validateForm();
+  showFormErrors(errors);
+  if (errors.length) return;
+
   button.disabled = true;
   button.textContent = 'Evaluating...';
+  retryButton.hidden = true;
+  el('verificationUnavailable').hidden = true;
 
   try {
-    const payload = getFormState();
+    lastPayload = getFormState();
     const cards = Array.from(document.querySelectorAll('.vendor-card'));
     const formData = new FormData();
-    formData.append('payload', JSON.stringify(payload));
+    formData.append('payload', JSON.stringify(lastPayload));
     let hasUploads = false;
     cards.forEach((card, index) => {
       Array.from(card.querySelector('.vendor-files').files || []).forEach((file) => {
@@ -279,10 +510,10 @@ const handleEvaluate = async () => {
     });
 
     if (!res.ok) {
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       renderProcessing(data.processing || [{ status: 'Failed / verification unavailable' }], data.documents || []);
       updateVerificationCard(data.verification || {});
-      throw new Error(data.error || 'Evaluation request failed.');
+      throw new Error(data.error || `Evaluation request failed (HTTP ${res.status}).`);
     }
     const streamEvent = await readEvaluationStream(res);
     const data = streamEvent.result;
@@ -300,6 +531,9 @@ const handleEvaluate = async () => {
     renderRankings(data.vendors);
     renderVendorDetails(data.vendors);
     updateSummary(data);
+    recordSessionEvaluation(data);
+    retryButton.hidden = false;
+    switchTab('verification');
   } catch (error) {
     updateVerificationCard({
       mode: 'error',
@@ -311,44 +545,51 @@ const handleEvaluate = async () => {
       gatewayVerified: false,
       modelVerified: false,
     });
-    if (!document.getElementById('processingDetails').children.length) {
+    if (!el('processingDetails').children.length) {
       setCurrentProcessing('Failed / verification unavailable');
     }
-    document.getElementById('winnerName').textContent = 'Evaluation failed';
-    document.getElementById('averageScore').textContent = '—';
-    document.getElementById('modelName').textContent = '—';
+    el('winnerName').textContent = 'Evaluation failed';
+    el('averageScore').textContent = '—';
+    el('modelName').textContent = '—';
+    el('vendorDetails').innerHTML = '';
     const failure = document.createElement('p');
-    failure.className = 'responsive-note';
+    failure.className = 'empty-state';
     failure.textContent = error.message;
-    document.getElementById('vendorDetails').replaceChildren(failure);
+    el('vendorDetails').appendChild(failure);
+    retryButton.hidden = false;
+    switchTab('verification');
   } finally {
     button.disabled = false;
     button.textContent = 'Evaluate bids';
   }
 };
 
+/* ---------- Init ---------- */
+
 window.addEventListener('DOMContentLoaded', () => {
   updateVerificationCard({ state: 'WAITING', status: 'Waiting for evaluation.' });
   loadDemo();
-  document.getElementById('loadDemo').addEventListener('click', loadDemo);
-  document.getElementById('addVendor').addEventListener('click', () => {
-    const container = document.getElementById('vendorList');
-    const card = document.createElement('div');
-    card.innerHTML = createVendorCard('', '', '', []);
-    const newCard = card.firstElementChild;
-    container.appendChild(newCard);
+  loadHealth();
+  renderSessionActivity();
+  renderHistory();
 
-    newCard.querySelector('.remove-vendor').addEventListener('click', () => {
-      if (container.children.length > 1) {
-        newCard.remove();
-      }
-    });
-
-    newCard.querySelector('.vendor-files').addEventListener('change', (event) => {
-      const names = Array.from(event.target.files || []).map((file) => file.name);
-      const fileLabel = newCard.querySelector('.uploaded-files');
-      fileLabel.textContent = names.length ? names.join(', ') : 'No files selected; text summary will be used for evaluation.';
-    });
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
   });
-  document.getElementById('evaluateButton').addEventListener('click', handleEvaluate);
+
+  el('loadDemo').addEventListener('click', loadDemo);
+  el('addVendor').addEventListener('click', () => {
+    const container = el('vendorList');
+    if (container.children.length >= LIMITS.maxVendors) {
+      showFormErrors([`At most ${LIMITS.maxVendors} vendors are allowed.`]);
+      return;
+    }
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = createVendorCard('', '', '', []);
+    const newCard = wrapper.firstElementChild;
+    container.appendChild(newCard);
+    bindVendorCard(newCard);
+  });
+  el('evaluateButton').addEventListener('click', handleEvaluate);
+  el('retryButton').addEventListener('click', handleEvaluate);
 });
