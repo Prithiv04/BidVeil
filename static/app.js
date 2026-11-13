@@ -1034,10 +1034,13 @@ const updateManualScoreSummary = () => {
   }
 
   const weights = defaultWeights;
+  const maxBudget = Number(payload.tender?.maximumBudget || 0);
+  
   const vendorScores = bids.map((bid, index) => {
     let total = 0;
     let hasMissing = false;
 
+    // Calculate manual criteria scores
     CRITERIA_CONFIG.forEach(c => {
       const input = el(`score_${index}_${c.id}`);
       const value = parseInt(input?.value || 0);
@@ -1047,6 +1050,19 @@ const updateManualScoreSummary = () => {
         total += (value || 0) * (weights[c.id] || 0);
       }
     });
+
+    // Auto-calculate price score (backend will do this too)
+    const quotedPrice = Number(bid.quotedPrice || 0);
+    let priceScore = 0;
+    if (maxBudget > 0 && quotedPrice > 0) {
+      if (quotedPrice <= maxBudget) {
+        priceScore = 100;
+      } else {
+        const overBudgetRatio = (quotedPrice - maxBudget) / maxBudget;
+        priceScore = Math.max(0, Math.min(100, 100 - (overBudgetRatio * 100)));
+      }
+    }
+    total += priceScore * (weights.price_competitiveness || 0);
 
     return {
       name: bid.vendorName || `Bidder ${index + 1}`,
@@ -1069,7 +1085,7 @@ const updateManualScoreSummary = () => {
         </div>
       `).join('')}
     </div>
-    <p class="fine-print">Scores are calculated using default weights. Price score is auto-calculated.</p>
+    <p class="fine-print">Scores include auto-calculated price competitiveness. Price score is derived from quoted price vs. budget.</p>
   `;
 };
 
@@ -1085,6 +1101,7 @@ const getManualScoresPayload = () => {
     bid.missingInformation = [];
     bid.riskIndicators = [];
 
+    // Only include manual criteria scores - price_competitiveness is auto-calculated by backend
     CRITERIA_CONFIG.forEach(c => {
       const scoreInput = el(`score_${index}_${c.id}`);
       const evidenceInput = el(`evidence_${index}_${c.id}`);
