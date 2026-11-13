@@ -99,13 +99,59 @@ The `inference.py` module provides a provider-agnostic interface. By default, no
 python -m pip install -r requirements.txt
 ```
 
-2. Start BIDVEIL:
+2. Configure environment variables (optional for development):
+
+```powershell
+# Copy the example environment file
+Copy-Item .env.example .env
+
+# Edit .env to set FLASK_SECRET_KEY for production use
+# For development, a random key is generated automatically
+```
+
+3. Start BIDVEIL:
 
 ```powershell
 python app.py
 ```
 
-3. Open `http://127.0.0.1:8000/`. Check `http://127.0.0.1:8000/api/health` for service readiness. Without a configured provider, health reports `none` and evaluation returns `INFERENCE_UNAVAILABLE`.
+4. Open `http://127.0.0.1:8000/`. Check `http://127.0.0.1:8000/api/health` for service readiness. Without a configured provider, health reports `none` and evaluation returns `INFERENCE_UNAVAILABLE`.
+
+## Production Deployment
+
+### Security Configuration
+
+For production deployment, configure the following environment variables:
+
+- `FLASK_SECRET_KEY`: Required. Generate a secure random key:
+  ```bash
+  python -c "import secrets; print(secrets.token_hex(32))"
+  ```
+- `BIDVEIL_TEMP_DIR`: Optional. Custom directory for temporary document processing.
+
+### Production Server
+
+BIDVEIL includes Gunicorn for production deployment. Run with:
+
+```bash
+gunicorn -w 4 -b 0.0.0.0:8000 app:app
+```
+
+Additional recommendations:
+- Use a reverse proxy (nginx, Apache) for SSL/TLS termination
+- Configure firewall rules to restrict access
+- Enable rate limiting on the reverse proxy
+- Use environment-specific configuration files
+- Monitor logs for suspicious activity
+
+### Security Considerations
+
+- **No Authentication**: BIDVEIL does not include built-in authentication. Deploy behind an authentication layer (OAuth, SSO, or reverse proxy auth) for production use.
+- **No CSRF Protection**: BIDVEIL does not use session-based features that require CSRF tokens. If adding authentication, implement CSRF protection.
+- **File Upload Limits**: Maximum 50 MB per request, 10 MB per document, 10 documents per vendor, 20 vendors.
+- **Temporary Files**: Documents are stored in request-scoped temporary directories and cleaned up after processing.
+- **No Persistence**: No database or file storage of evaluation data. All data is ephemeral.
+- **Inference Provider**: If using AI-assisted evaluation, configure provider credentials securely and review the provider's data retention policies.
 
 ## Tests
 

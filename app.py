@@ -19,7 +19,10 @@ import criteria
 load_dotenv()
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+
+# Security configuration
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
+app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 
 DEFAULT_WEIGHTS = {
     "technical_compliance": 0.30,
