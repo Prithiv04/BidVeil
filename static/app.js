@@ -849,13 +849,25 @@ const handleEvaluate = async () => {
     return;
   }
 
+  // Check evaluation mode - if manual, redirect to manual scoring
+  const mode = el('evaluationMode')?.value || 'auto';
+  if (mode === 'manual') {
+    toast('Switching to Manual Scoring mode. Please enter scores manually.', 'info');
+    lastPayload = getFormState();
+    switchView('manual-scoring');
+    setTimeout(renderManualScoring, 100);
+    return;
+  }
+
   evaluating = true;
   const button = el('evaluateButton');
-  button.disabled = true;
-  button.textContent = 'Evaluating…';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Evaluating…';
+  }
   resetProgress();
   appendLog('Uploading documents');
-  el('verificationUnavailable').hidden = true;
+  if (el('verificationUnavailable')) el('verificationUnavailable').hidden = true;
 
   try {
     lastPayload = getFormState();
@@ -900,16 +912,18 @@ const handleEvaluate = async () => {
       status: error.message,
       failureReason: error.message,
     });
-    if (!el('processingDetails').children.length) appendLog('Failed / verification unavailable');
-    el('resultsEmpty').hidden = false;
-    el('resultsContent').hidden = true;
-    el('resultsBadge').hidden = true;
+    if (el('processingDetails') && !el('processingDetails').children.length) appendLog('Failed / verification unavailable');
+    if (el('resultsEmpty')) el('resultsEmpty').hidden = false;
+    if (el('resultsContent')) el('resultsContent').hidden = true;
+    if (el('resultsBadge')) el('resultsBadge').hidden = true;
     toast(error.message, 'error');
     switchView('verification');
   } finally {
     evaluating = false;
-    button.disabled = false;
-    button.textContent = 'Run evaluation';
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Run evaluation';
+    }
   }
 };
 
@@ -924,12 +938,14 @@ const CRITERIA_CONFIG = [
 
 const renderManualScoring = () => {
   const container = el('manualVendorList');
+  if (!container) return;
+  
   const payload = lastPayload || getFormState();
   const bids = payload.bids || [];
 
   if (bids.length === 0) {
     container.innerHTML = '<p class="empty-state">No bidders configured. Go to Evaluate tab to add bidders first.</p>';
-    el('submitManualScores').disabled = true;
+    if (el('submitManualScores')) el('submitManualScores').disabled = true;
     return;
   }
 
@@ -972,12 +988,14 @@ const renderManualScoring = () => {
     input.addEventListener('input', validateManualScores);
   });
 
-  el('submitManualScores').disabled = false;
+  if (el('submitManualScores')) el('submitManualScores').disabled = false;
   updateManualScoreSummary();
 };
 
 const validateManualScores = () => {
   const container = el('manualVendorList');
+  if (!container) return false;
+  
   const inputs = container.querySelectorAll('.score-input');
   let isValid = true;
 
@@ -997,16 +1015,18 @@ const validateManualScores = () => {
     }
   });
 
-  el('submitManualScores').disabled = !isValid;
+  if (el('submitManualScores')) el('submitManualScores').disabled = !isValid;
   updateManualScoreSummary();
   return isValid;
 };
 
 const updateManualScoreSummary = () => {
   const container = el('manualVendorList');
+  const summary = el('manualScoreSummary');
+  if (!container || !summary) return;
+  
   const payload = lastPayload || getFormState();
   const bids = payload.bids || [];
-  const summary = el('manualScoreSummary');
 
   if (bids.length === 0) {
     summary.innerHTML = '<p class="empty-state">No bidders to score.</p>';
@@ -1034,6 +1054,11 @@ const updateManualScoreSummary = () => {
       missing: hasMissing
     };
   });
+
+  if (!vendorScores.length) {
+    summary.innerHTML = '<p class="empty-state">No bidders to score.</p>';
+    return;
+  }
 
   summary.innerHTML = `
     <div class="score-summary-list">
@@ -1128,23 +1153,33 @@ window.addEventListener('DOMContentLoaded', () => {
   renderSessionActivity();
   renderHistory();
 
+  // Navigation
   document.querySelectorAll('.nav-item').forEach((item) => {
     item.addEventListener('click', () => switchView(item.dataset.view));
   });
-  el('menuBtn').addEventListener('click', () => {
-    el('sidebar').classList.contains('open') ? closeSidebar() : openSidebar();
-  });
-  el('sidebarScrim').addEventListener('click', closeSidebar);
+  
+  // Mobile menu
+  if (el('menuBtn')) {
+    el('menuBtn').addEventListener('click', () => {
+      el('sidebar').classList.contains('open') ? closeSidebar() : openSidebar();
+    });
+  }
+  if (el('sidebarScrim')) {
+    el('sidebarScrim').addEventListener('click', closeSidebar);
+  }
 
-  el('ctaEvaluate').addEventListener('click', () => switchView('evaluate'));
-  el('ctaEvaluate2').addEventListener('click', () => switchView('evaluate'));
-  el('ctaEvaluate3').addEventListener('click', () => switchView('evaluate'));
-  el('ctaDemo').addEventListener('click', () => { loadDemo(); switchView('evaluate'); });
-  el('ctaVerify').addEventListener('click', () => switchView('verification'));
+  // Hero buttons
+  if (el('ctaEvaluate')) el('ctaEvaluate').addEventListener('click', () => switchView('evaluate'));
+  if (el('ctaEvaluate2')) el('ctaEvaluate2').addEventListener('click', () => switchView('evaluate'));
+  if (el('ctaEvaluate3')) el('ctaEvaluate3').addEventListener('click', () => switchView('evaluate'));
+  if (el('ctaDemo')) el('ctaDemo').addEventListener('click', () => { loadDemo(); switchView('evaluate'); });
+  if (el('ctaVerify')) el('ctaVerify').addEventListener('click', () => switchView('verification'));
 
-  el('loadDemo').addEventListener('click', loadDemo);
-  el('addVendor').addEventListener('click', () => {
+  // Evaluate form
+  if (el('loadDemo')) el('loadDemo').addEventListener('click', loadDemo);
+  if (el('addVendor')) el('addVendor').addEventListener('click', () => {
     const container = el('vendorList');
+    if (!container) return;
     if (container.children.length >= LIMITS.maxVendors) {
       showFormErrors([`At most ${LIMITS.maxVendors} bidders are allowed.`]);
       return;
@@ -1158,16 +1193,22 @@ window.addEventListener('DOMContentLoaded', () => {
     newCard.querySelector('.vendor-name').focus();
   });
 
-  el('evaluateButton').addEventListener('click', handleEvaluate);
-  el('downloadReport').addEventListener('click', downloadReport);
-  el('submitManualScores').addEventListener('click', handleManualScoreSubmit);
+  if (el('evaluateButton')) el('evaluateButton').addEventListener('click', handleEvaluate);
+  if (el('downloadReport')) el('downloadReport').addEventListener('click', downloadReport);
+  if (el('submitManualScores')) el('submitManualScores').addEventListener('click', handleManualScoreSubmit);
 
-  el('historySearch').addEventListener('input', renderHistory);
-  el('historyFilter').addEventListener('change', renderHistory);
-  el('historyClear').addEventListener('click', () => {
+  // History
+  if (el('historySearch')) el('historySearch').addEventListener('input', renderHistory);
+  if (el('historyFilter')) el('historyFilter').addEventListener('change', renderHistory);
+  if (el('historyClear')) el('historyClear').addEventListener('click', () => {
     sessionEvaluations.length = 0;
     renderSessionActivity();
     renderHistory();
     toast('Session history cleared.', 'info');
+  });
+  
+  // Manual scoring - render when switching to manual-scoring view
+  document.querySelector('.nav-item[data-view="manual-scoring"]')?.addEventListener('click', () => {
+    setTimeout(renderManualScoring, 50);
   });
 });
