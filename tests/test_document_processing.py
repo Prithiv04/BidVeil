@@ -324,7 +324,7 @@ def test_stream_endpoint_reports_processing_stages_in_order(monkeypatch):
     assert states == [
         "Extracting document",
         "Extracted document: bid.txt",
-        "Preparing confidential analysis",
+        "Preparing evaluation",
         "Running inference",
         "Evaluation completed",
         "Cleanup completed",

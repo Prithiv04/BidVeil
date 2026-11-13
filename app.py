@@ -14,6 +14,7 @@ from pypdf import PdfReader
 from werkzeug.datastructures import FileStorage
 
 import inference
+import criteria
 
 load_dotenv()
 
@@ -92,14 +93,27 @@ def normalize_bids(raw_bids: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 quoted_price = float(quoted_price.replace(",", ""))
             except ValueError:
                 quoted_price = 0.0
-        cleaned.append(
-            {
-                "vendorName": vendor_name,
-                "quotedPrice": float(quoted_price or 0),
-                "proposalText": str(proposal),
-                "documents": bid.get("documents") or [],
-            }
-        )
+        cleaned_bid = {
+            "vendorName": vendor_name,
+            "quotedPrice": float(quoted_price or 0),
+            "proposalText": str(proposal),
+            "documents": bid.get("documents") or [],
+        }
+        # Preserve manual scores if present
+        if "scores" in bid:
+            cleaned_bid["scores"] = bid["scores"]
+        # Preserve evidence fields if present
+        if "evidence" in bid:
+            cleaned_bid["evidence"] = bid["evidence"]
+        if "strengths" in bid:
+            cleaned_bid["strengths"] = bid["strengths"]
+        if "weaknesses" in bid:
+            cleaned_bid["weaknesses"] = bid["weaknesses"]
+        if "missingInformation" in bid:
+            cleaned_bid["missingInformation"] = bid["missingInformation"]
+        if "riskIndicators" in bid:
+            cleaned_bid["riskIndicators"] = bid["riskIndicators"]
+        cleaned.append(cleaned_bid)
     return cleaned
 
 
@@ -225,9 +239,8 @@ def derive_final_scores(vendors: list[dict[str, Any]], tender: dict[str, Any]) -
     for vendor in vendors:
         quoted_price = float(vendor.get("quotedPrice", 0) or 0)
         max_budget = float(tender.get("maximumBudget", 0) or 0)
-        normalized_price = 100.0
-        if max_budget > 0 and quoted_price > 0:
-            normalized_price = max(0.0, min(100.0, 100.0 - ((quoted_price / max_budget) * 100.0 - 100.0)))
+        # Use the improved price normalization from criteria module
+        normalized_price = criteria.normalize_price_score(quoted_price, max_budget)
         vendor["priceCompetitivenessScore"] = int(round(float(vendor.get("priceCompetitivenessScore", 0) or normalized_price)))
         vendor["technicalComplianceScore"] = int(float(vendor.get("technicalComplianceScore", 0) or 0))
         vendor["relevantExperienceScore"] = int(float(vendor.get("relevantExperienceScore", 0) or 0))
@@ -281,6 +294,98 @@ async def evaluate_bids(
             "temporaryStorage": "Uploads are held in a unique request-scoped temporary directory and removed at request completion.",
             "memoryErasure": "Process memory is released by normal runtime lifecycle; cryptographic memory erasure is not guaranteed.",
             "externalProcessing": "Bid text is sent to an inference provider when configured. The provider's retention and processing policies are outside BIDVEIL's control.",
+        },
+        "summary": {
+            "winner": ranked_vendors[0]["vendorName"] if ranked_vendors else "No vendor available",
+            "averageScore": round(sum(v["weightedScore"] for v in ranked_vendors) / len(ranked_vendors), 2) if ranked_vendors else 0,
+        },
+    }
+
+
+def evaluate_manual_scores(payload: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate bids using manually entered scores (no AI required).
+
+    This function:
+    1. Validates criteria configuration
+    2. Normalizes and validates vendor scores
+    3. Auto-calculates price scores if not provided
+    4. Applies weighted scoring using the existing scoring engine
+    5. Returns ranked results
+
+    Args:
+        payload: Evaluation payload with tender, bids, and manual scores
+
+    Returns:
+        Evaluation result with ranked vendors and metadata
+
+    Raises:
+        EvaluationServiceError: If validation fails
+    """
+    tender = payload.get("tender") or {}
+    bids = normalize_bids(payload.get("bids") or [])
+
+    if not bids:
+        raise EvaluationServiceError("Add at least one vendor bid before evaluation.", 400)
+
+    # Get criteria configuration (use default if not provided)
+    criteria_config = tender.get("criteria") or criteria.DEFAULT_CRITERIA
+
+    # Validate criteria configuration
+    valid, error = criteria.validate_criteria_config(criteria_config)
+    if not valid:
+        raise EvaluationServiceError(f"Invalid criteria configuration: {error}", 400)
+
+    # Extract weights from criteria
+    weights = criteria.get_criteria_weights(criteria_config)
+
+    # Validate and normalize each vendor's scores
+    for bid in bids:
+        try:
+            criteria.normalize_vendor_scores(bid, criteria_config, tender)
+        except ValueError as e:
+            vendor_name = bid.get("vendorName", "Unnamed vendor")
+            raise EvaluationServiceError(f"Vendor '{vendor_name}': {str(e)}", 400) from e
+
+    # Map scores to the format expected by derive_final_scores
+    for bid in bids:
+        scores = bid.get("scores", {})
+        bid["technicalComplianceScore"] = scores.get("technical_compliance", 0)
+        bid["priceCompetitivenessScore"] = scores.get("price_competitiveness", 0)
+        bid["relevantExperienceScore"] = scores.get("relevant_experience", 0)
+        bid["deliveryTimelineScore"] = scores.get("delivery_timeline", 0)
+        bid["eligibilityDocumentationScore"] = scores.get("eligibility_and_documentation", 0)
+
+    # Use the existing scoring engine
+    ranked_vendors = derive_final_scores(bids, tender)
+    for index, vendor in enumerate(ranked_vendors, start=1):
+        vendor["rank"] = index
+
+    # Preserve evidence and justification fields
+    for bid in bids:
+        vendor_name = bid.get("vendorName")
+        for ranked_vendor in ranked_vendors:
+            if ranked_vendor.get("vendorName") == vendor_name:
+                ranked_vendor["evidence"] = bid.get("evidence", {})
+                ranked_vendor["strengths"] = bid.get("strengths", [])
+                ranked_vendor["weaknesses"] = bid.get("weaknesses", [])
+                ranked_vendor["missingInformation"] = bid.get("missingInformation", [])
+                ranked_vendor["riskIndicators"] = bid.get("riskIndicators", [])
+                break
+
+    return {
+        "tender": tender,
+        "vendors": ranked_vendors,
+        "verification": inference.empty_verification(
+            state=inference.STATE_INFERENCE_COMPLETED,
+            status="Manual evaluation completed",
+        ),
+        "weights": weights,
+        "evaluationMode": "manual",
+        "privacy": {
+            "serverSideRetention": "BIDVEIL does not intentionally persist uploaded bid content, prompts, or evaluation responses.",
+            "temporaryStorage": "Uploads are held in a unique request-scoped temporary directory and removed at request completion.",
+            "memoryErasure": "Process memory is released by normal runtime lifecycle; cryptographic memory erasure is not guaranteed.",
+            "externalProcessing": "Manual evaluation does not send data to external inference providers.",
         },
         "summary": {
             "winner": ranked_vendors[0]["vendorName"] if ranked_vendors else "No vendor available",
@@ -440,14 +545,25 @@ def process_evaluation(
 
             close_uploads()
             uploads_by_vendor.clear()
-            emit("preparing", "Preparing confidential analysis")
+            emit("preparing", "Preparing evaluation")
 
-            def mark_verifying() -> None:
-                emit("verifying", "Running inference")
+            # Determine evaluation mode
+            evaluation_mode = payload.get("evaluationMode", "auto")
 
-            result = asyncio.run(evaluate_bids(payload, mark_verifying))
-            verification = result.get("verification") or {}
-            emit("evaluation_completed", "Evaluation completed")
+            if evaluation_mode == "manual":
+                # Manual evaluation - no AI required
+                emit("scoring", "Calculating weighted scores")
+                result = evaluate_manual_scores(payload)
+                verification = result.get("verification") or {}
+                emit("evaluation_completed", "Evaluation completed")
+            else:
+                # AI-assisted evaluation (default)
+                def mark_verifying() -> None:
+                    emit("verifying", "Running inference")
+
+                result = asyncio.run(evaluate_bids(payload, mark_verifying))
+                verification = result.get("verification") or {}
+                emit("evaluation_completed", "Evaluation completed")
     except DocumentInputError as error:
         failure = str(error)
         document_statuses = error.documents
@@ -561,6 +677,73 @@ def evaluate_route():
         return error_response
     result, status_code = process_evaluation(payload, uploads_by_vendor)
     return jsonify(result), status_code
+
+
+@app.route("/api/evaluate/manual", methods=["POST"])
+def evaluate_manual_route():
+    """Manual evaluation endpoint - works without AI inference."""
+    # Handle JSON payload directly
+    if request.mimetype == "application/json":
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Evaluation payload must be an object."}), 400
+        uploads_by_vendor = {}
+    else:
+        # Use evaluation_request for multipart/form-data
+        payload, uploads_by_vendor, error_response = evaluation_request()
+        if error_response:
+            return error_response
+
+    # Process documents if uploaded
+    document_statuses = []
+    if uploads_by_vendor:
+        # Reuse the document extraction part of process_evaluation
+        # but skip the AI inference step
+        temp_root = os.environ.get("BIDVEIL_TEMP_DIR")
+
+        def emit(state: str, status: str) -> None:
+            document_statuses.append({"state": state, "status": status})
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="bidveil-", dir=temp_root) as request_dir:
+                temp_directory_path = Path(request_dir)
+                bids = payload.get("bids") or []
+                if not isinstance(bids, list) or len(bids) > MAX_VENDORS:
+                    return jsonify({"error": "A maximum of 20 vendor bids is supported."}), 400
+
+                for vendor_index, uploads in uploads_by_vendor.items():
+                    if vendor_index < 0 or vendor_index >= len(bids):
+                        return jsonify({"error": "A document was submitted for an unknown vendor."}), 400
+                    if len(uploads) > MAX_DOCUMENTS_PER_BID:
+                        return jsonify({"error": "A maximum of 10 documents per vendor is supported."}), 400
+
+                for vendor_index, uploads in uploads_by_vendor.items():
+                    for document_index, upload in enumerate(uploads):
+                        try:
+                            text, status = extract_uploaded_document(
+                                upload,
+                                Path(request_dir),
+                                vendor_index,
+                                document_index,
+                            )
+                        except ValueError as error:
+                            return jsonify({"error": str(error)}), 400
+
+                        bids[vendor_index].setdefault("documents", []).append({"text": text})
+                        emit("extracting", f"Extracted document: {status['fileName']}")
+
+        except Exception as e:
+            return jsonify({"error": f"Document extraction failed: {str(e)}"}), 500
+
+    # Perform manual evaluation
+    try:
+        result = evaluate_manual_scores(payload)
+        result["documents"] = document_statuses
+        return jsonify(result), 200
+    except EvaluationServiceError as e:
+        return jsonify({"error": str(e)}), e.status_code
+    except Exception as e:
+        return jsonify({"error": f"Evaluation failed: {str(e)}"}), 500
 
 
 @app.route("/api/evaluate/stream", methods=["POST"])

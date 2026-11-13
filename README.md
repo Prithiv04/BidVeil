@@ -1,13 +1,16 @@
 # BIDVEIL
 
-BIDVEIL is an AI-assisted tender evaluation dashboard with a provider-agnostic inference interface. It ranks submissions using a deterministic weighted scoring engine. Results are decision support, not an automatic or legally binding procurement decision.
+BIDVEIL is a tender evaluation dashboard with provider-agnostic inference and manual scoring modes. It ranks submissions using a deterministic weighted scoring engine. Results are decision support, not an automatic or legally binding procurement decision.
 
 ## Features
 
 - Tender setup and multiple vendor bid submissions
 - PDF and UTF-8 TXT upload with server-side extraction
+- **Manual scoring mode**: Enter bidder scores directly without AI (works without any provider)
+- **AI-assisted evaluation**: Configure any AI provider in `inference.py` for automated analysis
 - Weighted scoring, ranking, criterion breakdown, and evaluation evidence
-- Provider-agnostic inference interface (configure any AI provider in `inference.py`)
+- Configurable evaluation criteria with customizable weights
+- Price normalization with explicit over-budget handling
 - Request-specific processing status, extraction result, and cleanup confirmation
 - No database or application-level history for bids or evaluation content
 
@@ -46,12 +49,34 @@ Evaluation states: `WAITING`, `INFERENCE_PENDING`, `INFERENCE_COMPLETED`, `INFER
 
 ## Judge demo workflow (fictional vendors)
 
+### Manual Scoring Mode (no AI required)
+
 1. `python app.py` then open `http://127.0.0.1:8000/`.
-2. Click **Load demo** — three fictional vendors (Northstar Systems: lower price/moderate compliance; Meridian Consulting: higher price/excellent compliance; Helio DataWorks: competitive price/incomplete documentation).
-3. Optionally attach the sample TXT files referenced in the demo proposals.
-4. Click **Evaluate bids** — watch Processing status stream extraction -> preparation -> inference -> completion -> cleanup.
-5. Inspect the **Evaluation Integrity** section: it shows document validation, extraction status, scoring completion, and cleanup status. Without a configured provider, the state will be `INFERENCE_UNAVAILABLE`.
-6. Rankings and per-vendor evidence come from the deterministic weighted scoring engine; the AI only extracts structured evidence, never final scores.
+2. Configure your tender in the **Evaluate** tab:
+   - Enter tender title, description, budget, and requirements
+   - Add bidders with their quoted prices and proposal summaries
+   - Select **Manual scoring** as the evaluation mode
+3. Navigate to the **Manual Scoring** tab:
+   - Enter scores (0-100) for each bidder on the required criteria:
+     - Technical Compliance
+     - Relevant Experience
+     - Delivery Timeline
+     - Eligibility & Documentation
+   - Price scores are auto-calculated based on budget
+   - Add evidence, strengths, and weaknesses for each bidder
+4. Click **Submit & Rank** to calculate weighted scores and rankings
+5. View results in the **Results** tab with score breakdowns and rankings
+
+### AI-Assisted Evaluation (requires provider configuration)
+
+1. Configure an AI provider in `inference.py` (e.g., OpenAI, Anthropic, local models)
+2. `python app.py` then open `http://127.0.0.1:8000/`.
+3. Click **Load demo** — three fictional vendors (Northstar Systems: lower price/moderate compliance; Meridian Consulting: higher price/excellent compliance; Helio DataWorks: competitive price/incomplete documentation).
+4. Optionally attach the sample TXT files referenced in the demo proposals.
+5. Select **AI-Assisted** as the evaluation mode.
+6. Click **Evaluate bids** — watch Processing status stream extraction -> preparation -> inference -> completion -> cleanup.
+7. Inspect the **Evaluation Integrity** section: it shows document validation, extraction status, scoring completion, and cleanup status.
+8. Rankings and per-vendor evidence come from the deterministic weighted scoring engine; the AI only extracts structured evidence, never final scores.
 
 ## Privacy boundaries
 

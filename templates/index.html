@@ -30,6 +30,10 @@
             <svg viewBox="0 0 24 24" class="nav-icon"><path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zm0 9H5v-7h4v7zm10-9h-4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zm0 9h-4v-7h4v7zM13 3a4 4 0 0 0-4 4H7a6 6 0 0 1 6-6 6 6 0 0 1 6 6h-2a4 4 0 0 0-4-4z"/></svg>
             <span>Evaluate</span>
           </button>
+          <button class="nav-item" data-view="manual-scoring">
+            <svg viewBox="0 0 24 24" class="nav-icon"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            <span>Manual Scoring</span>
+          </button>
           <button class="nav-item" data-view="results">
             <svg viewBox="0 0 24 24" class="nav-icon"><path d="M4 20V10h4v10H4zm6 0V4h4v16h-4zm6 0v-7h4v7h-4z"/></svg>
             <span>Results</span>
@@ -179,6 +183,13 @@
                       <label for="submissionDeadline">Submission deadline</label>
                       <input id="submissionDeadline" type="date" />
                     </div>
+                    <div class="field-group">
+                      <label for="evaluationMode">Evaluation mode</label>
+                      <select id="evaluationMode">
+                        <option value="auto">AI-Assisted (requires provider)</option>
+                        <option value="manual">Manual scoring</option>
+                      </select>
+                    </div>
                     <div class="field-group span-2">
                       <label for="eligibilityRequirements">Eligibility requirements</label>
                       <textarea id="eligibilityRequirements" rows="2" placeholder="Mandatory qualifications, certifications, experience…"></textarea>
@@ -220,6 +231,28 @@
                   </div>
                   <button id="evaluateButton" class="btn btn-primary btn-block" type="button">Run evaluation</button>
                   <p class="fine-print">Documents are processed ephemerally and deleted after the request. AI output is decision support, not a binding award.</p>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <!-- ================= MANUAL SCORING ================= -->
+          <section class="view" id="view-manual-scoring">
+            <div class="manual-layout">
+              <div class="manual-main">
+                <div class="card">
+                  <div class="card-head">
+                    <h3>Manual Scoring</h3>
+                    <span class="card-note">Enter scores for each bidder</span>
+                  </div>
+                  <div id="manualVendorList" class="manual-vendor-list"></div>
+                </div>
+              </div>
+              <aside class="manual-side">
+                <div class="card sticky-card">
+                  <div class="card-head"><h3>Score Summary</h3></div>
+                  <div id="manualScoreSummary"></div>
+                  <button id="submitManualScores" class="btn btn-primary btn-block" type="button">Submit & Rank</button>
                 </div>
               </aside>
             </div>

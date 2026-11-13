@@ -41,6 +41,7 @@ const PROGRESS_STEPS = [
 const VIEW_META = {
   overview: ['Overview', 'Command centre for confidential tender evaluation'],
   evaluate: ['Evaluate', 'Configure a tender and submit bids for verified AI evaluation'],
+  'manual-scoring': ['Manual Scoring', 'Enter bidder scores for manual evaluation'],
   results: ['Results', 'Winning bidder, score breakdown and evidence'],
   verification: ['Evaluation Integrity', 'Application integrity and evaluation status'],
   history: ['History', 'Session-only evaluation records'],
@@ -295,6 +296,7 @@ const getFormState = () => {
       quotedPrice: Number(card.querySelector('.vendor-price').value || 0),
       proposalText: card.querySelector('.vendor-proposal').value || '',
     })),
+    evaluationMode: el('evaluationMode').value || 'auto',
   };
 };
 
@@ -397,6 +399,7 @@ const STATE_TO_STEP = {
   extracting: 'extracting',
   preparing: 'preparing',
   verifying: 'verifying',
+  scoring: 'verifying',
   evaluation_completed: 'evaluation_completed',
   cleanup_completed: 'cleanup_completed',
   cleanup_failed: 'cleanup_completed',
@@ -603,8 +606,8 @@ const renderResults = (data) => {
 
   el('averageScore').textContent = typeof summary.averageScore === 'number' ? `${summary.averageScore} / 100` : '—';
   el('vendorCount').textContent = String(vendors.length);
-  el('modelName').textContent = verification.model || '—';
-  el('resultVerifyState').textContent = verification.state || '—';
+  el('modelName').textContent = data.evaluationMode === 'manual' ? 'Manual' : (verification.model || '—');
+  el('resultVerifyState').textContent = data.evaluationMode === 'manual' ? 'Manual evaluation' : (verification.state || '—');
 
   // Weighted score chart
   el('scoreChart').innerHTML = vendors.length
@@ -910,6 +913,212 @@ const handleEvaluate = async () => {
   }
 };
 
+/* ================= Manual Scoring ================= */
+
+const CRITERIA_CONFIG = [
+  { id: 'technical_compliance', name: 'Technical Compliance', required: true },
+  { id: 'relevant_experience', name: 'Relevant Experience', required: true },
+  { id: 'delivery_timeline', name: 'Delivery Timeline', required: true },
+  { id: 'eligibility_and_documentation', name: 'Eligibility & Documentation', required: true },
+];
+
+const renderManualScoring = () => {
+  const container = el('manualVendorList');
+  const payload = lastPayload || getFormState();
+  const bids = payload.bids || [];
+
+  if (bids.length === 0) {
+    container.innerHTML = '<p class="empty-state">No bidders configured. Go to Evaluate tab to add bidders first.</p>';
+    el('submitManualScores').disabled = true;
+    return;
+  }
+
+  container.innerHTML = bids.map((bid, index) => `
+    <div class="manual-vendor-card" data-vendor-index="${index}">
+      <div class="manual-vendor-header">
+        <h4>${escapeHtml(bid.vendorName || `Bidder ${index + 1}`)}</h4>
+        <span class="chip chip-ghost">$${Number(bid.quotedPrice || 0).toLocaleString()}</span>
+      </div>
+      <div class="manual-score-fields">
+        ${CRITERIA_CONFIG.map(c => `
+          <div class="score-field">
+            <label for="score_${index}_${c.id}">${escapeHtml(c.name)} ${c.required ? '<span class="required">*</span>' : ''}</label>
+            <div class="score-input-group">
+              <input type="number" id="score_${index}_${c.id}" min="0" max="100" step="1"
+                class="score-input" data-vendor="${index}" data-criterion="${c.id}"
+                placeholder="0-100" required="${c.required}">
+              <span class="score-unit">/ 100</span>
+            </div>
+            <textarea class="evidence-input" id="evidence_${index}_${c.id}"
+              placeholder="Justification and evidence..." rows="2"></textarea>
+          </div>
+        `).join('')}
+      </div>
+      <div class="manual-vendor-footer">
+        <div class="field-group">
+          <label>Strengths</label>
+          <textarea id="strengths_${index}" rows="2" placeholder="Key strengths..."></textarea>
+        </div>
+        <div class="field-group">
+          <label>Weaknesses</label>
+          <textarea id="weaknesses_${index}" rows="2" placeholder="Areas for improvement..."></textarea>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  // Bind input events for real-time validation
+  container.querySelectorAll('.score-input').forEach(input => {
+    input.addEventListener('input', validateManualScores);
+  });
+
+  el('submitManualScores').disabled = false;
+  updateManualScoreSummary();
+};
+
+const validateManualScores = () => {
+  const container = el('manualVendorList');
+  const inputs = container.querySelectorAll('.score-input');
+  let isValid = true;
+
+  inputs.forEach(input => {
+    const value = parseInt(input.value);
+    const required = input.required;
+    const criterion = CRITERIA_CONFIG.find(c => c.id === input.dataset.criterion);
+
+    if (required && (isNaN(value) || value < 0 || value > 100)) {
+      input.classList.add('invalid');
+      isValid = false;
+    } else if (!isNaN(value) && (value < 0 || value > 100)) {
+      input.classList.add('invalid');
+      isValid = false;
+    } else {
+      input.classList.remove('invalid');
+    }
+  });
+
+  el('submitManualScores').disabled = !isValid;
+  updateManualScoreSummary();
+  return isValid;
+};
+
+const updateManualScoreSummary = () => {
+  const container = el('manualVendorList');
+  const payload = lastPayload || getFormState();
+  const bids = payload.bids || [];
+  const summary = el('manualScoreSummary');
+
+  if (bids.length === 0) {
+    summary.innerHTML = '<p class="empty-state">No bidders to score.</p>';
+    return;
+  }
+
+  const weights = defaultWeights;
+  const vendorScores = bids.map((bid, index) => {
+    let total = 0;
+    let hasMissing = false;
+
+    CRITERIA_CONFIG.forEach(c => {
+      const input = el(`score_${index}_${c.id}`);
+      const value = parseInt(input?.value || 0);
+      if (c.required && (isNaN(value) || input?.value === '')) {
+        hasMissing = true;
+      } else {
+        total += (value || 0) * (weights[c.id] || 0);
+      }
+    });
+
+    return {
+      name: bid.vendorName || `Bidder ${index + 1}`,
+      score: hasMissing ? null : Math.round(total * 100) / 100,
+      missing: hasMissing
+    };
+  });
+
+  summary.innerHTML = `
+    <div class="score-summary-list">
+      ${vendorScores.map(v => `
+        <div class="score-summary-item">
+          <span>${escapeHtml(v.name)}</span>
+          <strong class="${v.missing ? 'text-muted' : ''}">${v.missing ? '—' : v.score}</strong>
+        </div>
+      `).join('')}
+    </div>
+    <p class="fine-print">Scores are calculated using default weights. Price score is auto-calculated.</p>
+  `;
+};
+
+const getManualScoresPayload = () => {
+  const payload = lastPayload || getFormState();
+  const bids = payload.bids || [];
+
+  bids.forEach((bid, index) => {
+    bid.scores = {};
+    bid.evidence = {};
+    bid.strengths = [];
+    bid.weaknesses = [];
+    bid.missingInformation = [];
+    bid.riskIndicators = [];
+
+    CRITERIA_CONFIG.forEach(c => {
+      const scoreInput = el(`score_${index}_${c.id}`);
+      const evidenceInput = el(`evidence_${index}_${c.id}`);
+      bid.scores[c.id] = parseInt(scoreInput?.value || 0);
+      bid.evidence[c.id] = evidenceInput?.value || '';
+    });
+
+    const strengthsInput = el(`strengths_${index}`);
+    const weaknessesInput = el(`weaknesses_${index}`);
+    if (strengthsInput?.value) {
+      bid.strengths = strengthsInput.value.split('\n').filter(s => s.trim());
+    }
+    if (weaknessesInput?.value) {
+      bid.weaknesses = weaknessesInput.value.split('\n').filter(s => s.trim());
+    }
+  });
+
+  payload.evaluationMode = 'manual';
+  return payload;
+};
+
+const handleManualScoreSubmit = async () => {
+  if (!validateManualScores()) {
+    toast('Please fix invalid scores before submitting.', 'error');
+    return;
+  }
+
+  const button = el('submitManualScores');
+  button.disabled = true;
+  button.textContent = 'Submitting…';
+
+  try {
+    const payload = getManualScoresPayload();
+    lastPayload = payload;
+
+    const res = await fetch('/api/evaluate/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Submission failed (HTTP ${res.status})`);
+    }
+
+    const data = await res.json();
+    renderResults(data);
+    recordSessionEvaluation(data);
+    toast('Manual evaluation complete — rankings calculated.', 'success');
+    switchView('results');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Submit & Rank';
+  }
+};
+
 /* ================= Init ================= */
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -951,6 +1160,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   el('evaluateButton').addEventListener('click', handleEvaluate);
   el('downloadReport').addEventListener('click', downloadReport);
+  el('submitManualScores').addEventListener('click', handleManualScoreSubmit);
 
   el('historySearch').addEventListener('input', renderHistory);
   el('historyFilter').addEventListener('change', renderHistory);
