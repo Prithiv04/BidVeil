@@ -114,19 +114,28 @@ const switchView = (name) => {
   document.querySelectorAll('.view').forEach((view) => {
     view.classList.toggle('active', view.id === `view-${name}`);
   });
-  el('pageTitle').textContent = VIEW_META[name][0];
-  el('pageSubtitle').textContent = VIEW_META[name][1];
+  if (el('pageTitle')) el('pageTitle').textContent = VIEW_META[name][0];
+  if (el('pageSubtitle')) el('pageSubtitle').textContent = VIEW_META[name][1];
   closeSidebar();
   window.scrollTo({ top: 0 });
+
+  // Render manual scoring when switching to that view
+  if (name === 'manual-scoring') {
+    setTimeout(renderManualScoring, 50);
+  }
 };
 
 const openSidebar = () => {
-  el('sidebar').classList.add('open');
-  el('sidebarScrim').classList.add('show');
+  const sidebar = el('sidebar');
+  const scrim = el('sidebarScrim');
+  if (sidebar) sidebar.classList.add('open');
+  if (scrim) scrim.classList.add('show');
 };
 const closeSidebar = () => {
-  el('sidebar').classList.remove('open');
-  el('sidebarScrim').classList.remove('show');
+  const sidebar = el('sidebar');
+  const scrim = el('sidebarScrim');
+  if (sidebar) sidebar.classList.remove('open');
+  if (scrim) scrim.classList.remove('show');
 };
 
 /* ================= Vendor cards & file queues ================= */
@@ -273,6 +282,7 @@ const bindVendorCard = (card) => {
 
 const renderVendorCards = (vendors) => {
   const container = el('vendorList');
+  if (!container) return;
   container.innerHTML = vendors.map((vendor) => createVendorCard(vendor.name, vendor.price, vendor.proposal)).join('');
   container.querySelectorAll('.vendor-card').forEach(bindVendorCard);
   updateReadiness();
@@ -282,21 +292,21 @@ const getFormState = () => {
   const cards = Array.from(document.querySelectorAll('.vendor-card'));
   return {
     tender: {
-      title: el('tenderTitle').value,
-      description: el('tenderDescription').value,
-      maximumBudget: Number(el('maximumBudget').value || 0),
-      deadline: el('submissionDeadline').value,
-      eligibilityRequirements: el('eligibilityRequirements').value,
-      technicalRequirements: el('technicalRequirements').value,
-      evaluationCriteria: el('evaluationCriteria').value,
+      title: el('tenderTitle')?.value || '',
+      description: el('tenderDescription')?.value || '',
+      maximumBudget: Number(el('maximumBudget')?.value || 0),
+      deadline: el('submissionDeadline')?.value || '',
+      eligibilityRequirements: el('eligibilityRequirements')?.value || '',
+      technicalRequirements: el('technicalRequirements')?.value || '',
+      evaluationCriteria: el('evaluationCriteria')?.value || '',
       weights: defaultWeights,
     },
     bids: cards.map((card) => ({
-      vendorName: card.querySelector('.vendor-name').value || 'Unnamed vendor',
-      quotedPrice: Number(card.querySelector('.vendor-price').value || 0),
-      proposalText: card.querySelector('.vendor-proposal').value || '',
+      vendorName: card.querySelector('.vendor-name')?.value || 'Unnamed vendor',
+      quotedPrice: Number(card.querySelector('.vendor-price')?.value || 0),
+      proposalText: card.querySelector('.vendor-proposal')?.value || '',
     })),
-    evaluationMode: el('evaluationMode').value || 'auto',
+    evaluationMode: el('evaluationMode')?.value || 'auto',
   };
 };
 
@@ -310,19 +320,19 @@ const updateReadiness = () => {
       bytes += entry.file.size;
     });
   });
-  el('rdVendors').textContent = String(cards.length);
-  el('rdDocs').textContent = String(docs);
-  el('rdSize').textContent = fmtBytes(bytes);
+  if (el('rdVendors')) el('rdVendors').textContent = String(cards.length);
+  if (el('rdDocs')) el('rdDocs').textContent = String(docs);
+  if (el('rdSize')) el('rdSize').textContent = fmtBytes(bytes);
 };
 
 const loadDemo = () => {
-  el('tenderTitle').value = 'Modern Secure Government Data Platform';
-  el('tenderDescription').value = 'Procurement for a secure government data platform with migration, governance, and modernization requirements.';
-  el('maximumBudget').value = '1000000';
-  el('submissionDeadline').value = '2026-12-31';
-  el('eligibilityRequirements').value = 'Vendor must have three comparable public sector modernizations and valid security certifications.';
-  el('technicalRequirements').value = 'Need secure integration, RBAC, encrypted data transport, monitoring, and phased rollout.';
-  el('evaluationCriteria').value = 'Technical compliance, price competitiveness, relevant experience, delivery timeline, eligibility and documentation.';
+  if (el('tenderTitle')) el('tenderTitle').value = 'Modern Secure Government Data Platform';
+  if (el('tenderDescription')) el('tenderDescription').value = 'Procurement for a secure government data platform with migration, governance, and modernization requirements.';
+  if (el('maximumBudget')) el('maximumBudget').value = '1000000';
+  if (el('submissionDeadline')) el('submissionDeadline').value = '2026-12-31';
+  if (el('eligibilityRequirements')) el('eligibilityRequirements').value = 'Vendor must have three comparable public sector modernizations and valid security certifications.';
+  if (el('technicalRequirements')) el('technicalRequirements').value = 'Need secure integration, RBAC, encrypted data transport, monitoring, and phased rollout.';
+  if (el('evaluationCriteria')) el('evaluationCriteria').value = 'Technical compliance, price competitiveness, relevant experience, delivery timeline, eligibility and documentation.';
 
   renderVendorCards([
     { name: 'Northstar Systems', price: '740000', proposal: 'Fictional Vendor A: lower quotation with moderate technical compliance, phased migration, and a 10-month delivery window.' },
@@ -360,7 +370,8 @@ const validateForm = () => {
     errors.push(`Total upload size exceeds the 50 MB request limit (${fmtBytes(totalBytes)}).`);
   }
 
-  const budget = Number(el('maximumBudget').value || 0);
+  const maxBudgetEl = el('maximumBudget');
+  const budget = maxBudgetEl ? Number(maxBudgetEl.value || 0) : 0;
   if (budget < 0) errors.push('Maximum budget cannot be negative.');
 
   return errors;
@@ -368,6 +379,7 @@ const validateForm = () => {
 
 const showFormErrors = (errors) => {
   const box = el('formErrors');
+  if (!box) return;
   if (!errors.length) {
     box.hidden = true;
     box.innerHTML = '';
@@ -380,16 +392,23 @@ const showFormErrors = (errors) => {
 /* ================= Progress stepper ================= */
 
 const resetProgress = () => {
-  el('progressPanel').hidden = false;
-  el('progressSteps').innerHTML = PROGRESS_STEPS.map((step) => `
-    <div class="pstep" data-step="${step.key}">
-      <span class="pstep-dot"></span><span>${step.label}</span>
-    </div>`).join('');
-  el('processingDetails').innerHTML = '';
+  const panel = el('progressPanel');
+  const steps = el('progressSteps');
+  const details = el('processingDetails');
+  if (panel) panel.hidden = false;
+  if (steps) {
+    steps.innerHTML = PROGRESS_STEPS.map((step) => `
+      <div class="pstep" data-step="${step.key}">
+        <span class="pstep-dot"></span><span>${step.label}</span>
+      </div>`).join('');
+  }
+  if (details) details.innerHTML = '';
 };
 
 const markStep = (key, status) => {
-  const step = el('progressSteps').querySelector(`[data-step="${key}"]`);
+  const steps = el('progressSteps');
+  if (!steps) return;
+  const step = steps.querySelector(`[data-step="${key}"]`);
   if (!step) return;
   step.classList.remove('active', 'done', 'failed');
   step.classList.add(status);
@@ -420,6 +439,7 @@ const handleProgressState = (state, status) => {
 
 const appendLog = (text) => {
   const list = el('processingDetails');
+  if (!list) return;
   const item = document.createElement('li');
   item.textContent = text;
   list.appendChild(item);
@@ -497,23 +517,28 @@ const updateVerificationCard = (verification = {}) => {
   const state = verification.state || 'WAITING';
 
   const badge = el('verificationBadge');
+  if (!badge) return;
   badge.textContent = state;
   badge.className = `badge badge-lg ${badgeClassFor(state)}`;
-  el('verificationMode').textContent = `mode: ${verification.mode || '—'}`;
-  el('verificationExplanation').textContent = verificationExplanationFor(state, verification);
+  if (el('verificationMode')) el('verificationMode').textContent = `mode: ${verification.mode || '—'}`;
+  if (el('verificationExplanation')) el('verificationExplanation').textContent = verificationExplanationFor(state, verification);
 
   // Application integrity stats
   const validation = triState(verification.validationVerified !== false);
   const extraction = triState(verification.extractionVerified !== false);
   const cleanup = triState(verification.cleanupVerified !== false);
 
-  const setStat = (id, st) => {
-    el(id).querySelector('strong').textContent = st.text;
-    el(id).className = `stat-card verify-stat ${st.cls}`;
+  const setStat = (containerId, stateId, st) => {
+    const container = el(containerId);
+    const stateEl = el(stateId);
+    if (container && stateEl) {
+      stateEl.textContent = st.text;
+      container.className = `stat-card verify-stat ${st.cls}`;
+    }
   };
-  setStat('vsValidationState', validation);
-  setStat('vsExtractionState', extraction);
-  setStat('vsCleanupState', cleanup);
+  setStat('vsValidation', 'vsValidationState', validation);
+  setStat('vsExtraction', 'vsExtractionState', extraction);
+  setStat('vsCleanup', 'vsCleanupState', cleanup);
 
   // Lifecycle timeline — application integrity steps
   const reached = {
@@ -526,16 +551,19 @@ const updateVerificationCard = (verification = {}) => {
   const failedAt = state === 'INFERENCE_FAILED' ? 'inference' : null;
   const unavailable = state === 'INFERENCE_UNAVAILABLE';
 
-  document.querySelectorAll('#verifyTimeline li').forEach((li) => {
-    const step = li.dataset.step;
-    li.classList.remove('done', 'active', 'failed', 'todo');
-    if (unavailable) { li.classList.add('todo'); return; }
-    const idx = reached.indexOf(step);
-    if (failedAt === step) li.classList.add('failed');
-    else if (idx === reached.length - 1 && state !== 'INFERENCE_FAILED') li.classList.add('done');
-    else if (idx >= 0) li.classList.add('done');
-    else li.classList.add('todo');
-  });
+  const timeline = document.getElementById('verifyTimeline');
+  if (timeline) {
+    timeline.querySelectorAll('li').forEach((li) => {
+      const step = li.dataset.step;
+      li.classList.remove('done', 'active', 'failed', 'todo');
+      if (unavailable) { li.classList.add('todo'); return; }
+      const idx = reached.indexOf(step);
+      if (failedAt === step) li.classList.add('failed');
+      else if (idx === reached.length - 1 && state !== 'INFERENCE_FAILED') li.classList.add('done');
+      else if (idx >= 0) li.classList.add('done');
+      else li.classList.add('todo');
+    });
+  }
 
   // Evidence detail grid
   const rows = [
@@ -544,26 +572,35 @@ const updateVerificationCard = (verification = {}) => {
     ['Model', verification.model || 'not configured', true],
     ['Failure explanation', verification.failureReason || verification.status || 'none', false],
   ];
-  el('verificationDetails').innerHTML = rows.map(([k, v, mono]) => `
-    <div class="dk">${escapeHtml(k)}</div><div class="dv ${mono ? '' : 'wrap'}">${escapeHtml(v)}</div>`).join('');
+  const detailsEl = el('verificationDetails');
+  if (detailsEl) {
+    detailsEl.innerHTML = rows.map(([k, v, mono]) => `
+      <div class="dk">${escapeHtml(k)}</div><div class="dv ${mono ? '' : 'wrap'}">${escapeHtml(v)}</div>`).join('');
+  }
 
   const notice = el('verificationUnavailable');
-  if (state === 'INFERENCE_UNAVAILABLE' || state === 'INFERENCE_FAILED') {
-    notice.hidden = false;
-    el('verificationUnavailableText').textContent = verification.failureReason || verification.status || '';
-  } else {
-    notice.hidden = true;
+  if (notice) {
+    if (state === 'INFERENCE_UNAVAILABLE' || state === 'INFERENCE_FAILED') {
+      notice.hidden = false;
+      const noticeText = el('verificationUnavailableText');
+      if (noticeText) noticeText.textContent = verification.failureReason || verification.status || '';
+    } else {
+      notice.hidden = true;
+    }
   }
 
   // Nav badge reflects latest state
   const navBadge = el('verifyNavBadge');
-  if (state === 'INFERENCE_COMPLETED') { navBadge.hidden = false; navBadge.textContent = 'OK'; }
-  else if (state === 'INFERENCE_FAILED' || state === 'INFERENCE_UNAVAILABLE') { navBadge.hidden = false; navBadge.textContent = '!'; }
-  else navBadge.hidden = true;
+  if (navBadge) {
+    if (state === 'INFERENCE_COMPLETED') { navBadge.hidden = false; navBadge.textContent = 'OK'; }
+    else if (state === 'INFERENCE_FAILED' || state === 'INFERENCE_UNAVAILABLE') { navBadge.hidden = false; navBadge.textContent = '!'; }
+    else navBadge.hidden = true;
+  }
 };
 
 const renderProcessingFinal = (processing = [], documents = []) => {
   const list = el('processingDetails');
+  if (!list) return;
   list.innerHTML = '';
   const entries = [
     ...processing.map((item) => item.status),
@@ -592,46 +629,53 @@ const renderResults = (data) => {
   const summary = data.summary || {};
   const verification = data.verification || {};
 
-  el('resultsEmpty').hidden = true;
-  el('resultsContent').hidden = false;
+  if (el('resultsEmpty')) el('resultsEmpty').hidden = true;
+  if (el('resultsContent')) el('resultsContent').hidden = false;
 
   const winner = vendors.find((v) => v.rank === 1) || vendors[0];
-  el('winnerName').textContent = summary.winner || winner?.vendorName || '—';
-  el('winnerSub').textContent = winner?.evidenceSummary
+  if (el('winnerName')) el('winnerName').textContent = summary.winner || winner?.vendorName || '—';
+  if (el('winnerSub')) el('winnerSub').textContent = winner?.evidenceSummary
     ? String(winner.evidenceSummary).slice(0, 220)
     : 'Evidence summary not provided by the evaluation.';
-  el('winnerScoreChip').textContent = winner ? `Score ${winner.weightedScore ?? '—'}` : '—';
-  el('winnerPriceChip').textContent = winner ? `Quote $${Number(winner.quotedPrice || 0).toLocaleString()}` : '—';
-  el('winnerVerifyChip').textContent = `Verification: ${verification.state || '—'}`;
+  if (el('winnerScoreChip')) el('winnerScoreChip').textContent = winner ? `Score ${winner.weightedScore ?? '—'}` : '—';
+  if (el('winnerPriceChip')) el('winnerPriceChip').textContent = winner ? `Quote $${Number(winner.quotedPrice || 0).toLocaleString()}` : '—';
+  if (el('winnerVerifyChip')) el('winnerVerifyChip').textContent = `Verification: ${verification.state || '—'}`;
 
-  el('averageScore').textContent = typeof summary.averageScore === 'number' ? `${summary.averageScore} / 100` : '—';
-  el('vendorCount').textContent = String(vendors.length);
-  el('modelName').textContent = data.evaluationMode === 'manual' ? 'Manual' : (verification.model || '—');
-  el('resultVerifyState').textContent = data.evaluationMode === 'manual' ? 'Manual evaluation' : (verification.state || '—');
+  if (el('averageScore')) el('averageScore').textContent = typeof summary.averageScore === 'number' ? `${summary.averageScore} / 100` : '—';
+  if (el('vendorCount')) el('vendorCount').textContent = String(vendors.length);
+  if (el('modelName')) el('modelName').textContent = data.evaluationMode === 'manual' ? 'Manual' : (verification.model || '—');
+  if (el('resultVerifyState')) el('resultVerifyState').textContent = data.evaluationMode === 'manual' ? 'Manual evaluation' : (verification.state || '—');
 
   // Weighted score chart
-  el('scoreChart').innerHTML = vendors.length
-    ? barChart(vendors.map((v) => ({
-        label: v.vendorName,
-        value: v.weightedScore ?? 0,
-        display: v.weightedScore ?? '—',
-      })), { winnerName: summary.winner || winner?.vendorName })
-    : '<p class="empty-state">No vendors returned.</p>';
+  if (el('scoreChart')) {
+    el('scoreChart').innerHTML = vendors.length
+      ? barChart(vendors.map((v) => ({
+          label: v.vendorName,
+          value: v.weightedScore ?? 0,
+          display: v.weightedScore ?? '—',
+        })), { winnerName: summary.winner || winner?.vendorName })
+      : '<p class="empty-state">No vendors returned.</p>';
+  }
 
   // Criteria chart — winner's per-criteria scores
   const critItems = winner
     ? CRITERIA_KEYS.map(([key, label]) => ({ label, value: winner[key] ?? 0, display: winner[key] ?? '—', alt: true }))
     : [];
-  el('criteriaChart').innerHTML = critItems.length
-    ? barChart(critItems)
-    : '<p class="empty-state">Criteria scores unavailable.</p>';
-  el('weightLegend').innerHTML = Object.entries(WEIGHT_LABELS).map(([key, label]) =>
-    `<span class="chip" data-tip="${escapeHtml(label)}">${escapeHtml(label)} · ${Math.round((defaultWeights[key] || 0) * 100)}%</span>`).join('');
+  if (el('criteriaChart')) {
+    el('criteriaChart').innerHTML = critItems.length
+      ? barChart(critItems)
+      : '<p class="empty-state">Criteria scores unavailable.</p>';
+  }
+  if (el('weightLegend')) {
+    el('weightLegend').innerHTML = Object.entries(WEIGHT_LABELS).map(([key, label]) =>
+      `<span class="chip" data-tip="${escapeHtml(label)}">${escapeHtml(label)} · ${Math.round((defaultWeights[key] || 0) * 100)}%</span>`).join('');
+  }
 
   // Rankings table
   const tbody = el('rankingsBody');
-  tbody.innerHTML = vendors.length
-    ? vendors.map((v) => `
+  if (tbody) {
+    tbody.innerHTML = vendors.length
+      ? vendors.map((v) => `
       <tr>
         <td><strong>#${escapeHtml(v.rank)}</strong></td>
         <td>${escapeHtml(v.vendorName)}</td>
@@ -645,6 +689,7 @@ const renderResults = (data) => {
         <td>${escapeHtml((v.riskIndicators || [])[0] || 'Low')}</td>
       </tr>`).join('')
     : '<tr><td colspan="5" class="empty-cell">No vendors returned.</td></tr>';
+  }
 
   // Rationale — built only from returned fields
   const rationale = [];
@@ -657,21 +702,24 @@ const renderResults = (data) => {
   } else {
     rationale.push('<p>No recommendation could be derived from the evaluation response.</p>');
   }
-  el('rationaleBox').innerHTML = rationale.join('');
+  if (el('rationaleBox')) el('rationaleBox').innerHTML = rationale.join('');
 
   // Risk panel
   const riskVendors = vendors.filter((v) => (v.riskIndicators || []).length);
-  el('riskPanel').innerHTML = riskVendors.length
-    ? riskVendors.map((v) => `
+  if (el('riskPanel')) {
+    el('riskPanel').innerHTML = riskVendors.length
+      ? riskVendors.map((v) => `
       <div class="risk-item">
         <span class="risk-vendor">${escapeHtml(v.vendorName)}</span>
         <ul>${v.riskIndicators.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
       </div>`).join('')
     : '<p class="risk-none">No risk indicators reported by the evaluation.</p>';
+  }
 
   // Evidence detail cards
-  el('vendorDetails').innerHTML = vendors.length
-    ? vendors.map((v) => `
+  if (el('vendorDetails')) {
+    el('vendorDetails').innerHTML = vendors.length
+      ? vendors.map((v) => `
       <div class="evidence-card">
         <h3>#${escapeHtml(v.rank)} · ${escapeHtml(v.vendorName)}</h3>
         <p>${escapeHtml(v.evidenceSummary || 'Evidence summary not available.')}</p>
@@ -685,10 +733,13 @@ const renderResults = (data) => {
         <p><strong>Missing information:</strong> ${escapeHtml((v.missingInformation || []).join(', ') || 'None identified')}</p>
       </div>`).join('')
     : '<p class="empty-state">No vendor evidence returned.</p>';
+  }
 
   const badge = el('resultsBadge');
-  badge.hidden = false;
-  badge.textContent = String(vendors.length);
+  if (badge) {
+    badge.hidden = false;
+    badge.textContent = String(vendors.length);
+  }
 };
 
 /* ================= Report export ================= */
@@ -741,15 +792,17 @@ const recordSessionEvaluation = (data) => {
 };
 
 const renderSessionActivity = () => {
-  el('ssCount').textContent = String(sessionEvaluations.length);
+  if (el('ssCount')) el('ssCount').textContent = String(sessionEvaluations.length);
   const latest = sessionEvaluations[0];
-  el('ssLastState').textContent = latest ? latest.state : '—';
-  el('ssLastWinner').textContent = latest ? latest.winner : '—';
+  if (el('ssLastState')) el('ssLastState').textContent = latest ? latest.state : '—';
+  if (el('ssLastWinner')) el('ssLastWinner').textContent = latest ? latest.winner : '—';
 
   const container = el('sessionActivity');
+  if (!container) return;
   if (!sessionEvaluations.length) {
     container.innerHTML = '<div class="empty-state"><p>No evaluations yet this session.</p><button class="btn btn-sm btn-primary" id="ctaEvaluate2b">Start your first evaluation</button></div>';
-    el('ctaEvaluate2b').addEventListener('click', () => switchView('evaluate'));
+    const btn = el('ctaEvaluate2b');
+    if (btn) btn.addEventListener('click', () => switchView('evaluate'));
     return;
   }
   container.innerHTML = sessionEvaluations.slice(0, 5).map((entry) => `
@@ -773,6 +826,7 @@ const renderHistory = () => {
   });
 
   const container = el('historyList');
+  if (!container) return;
   if (!sessionEvaluations.length) {
     container.innerHTML = '<div class="empty-state"><p>No evaluations recorded yet this session.</p></div>';
     return;
@@ -811,30 +865,38 @@ const loadHealth = async () => {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const health = await res.json();
 
-    el('ovApiStatus').textContent = health.status === 'ok' ? 'Operational' : 'Degraded';
-    el('ovApiHint').textContent = 'BIDVEIL service responding';
-    el('ovModel').textContent = health.inferenceProvider || 'none';
-    ['hcApi', 'hcModel'].forEach((id) => el(id).classList.add('loaded'));
+    if (el('ovApiStatus')) el('ovApiStatus').textContent = health.status === 'ok' ? 'Operational' : 'Degraded';
+    if (el('ovApiHint')) el('ovApiHint').textContent = 'BIDVEIL service responding';
+    if (el('ovModel')) el('ovModel').textContent = health.inferenceProvider || 'none';
+    ['hcApi', 'hcModel'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('loaded');
+    });
 
     if (health.inferenceProvider && health.inferenceProvider !== 'none') {
-      pill.className = 'status-pill status-ok';
-      pillText.textContent = 'Provider configured';
+      if (pill) pill.className = 'status-pill status-ok';
+      if (pillText) pillText.textContent = 'Provider configured';
     } else {
-      pill.className = 'status-pill status-degraded';
-      pillText.textContent = 'No provider configured';
+      if (pill) pill.className = 'status-pill status-degraded';
+      if (pillText) pillText.textContent = 'No provider configured';
     }
 
-    el('ovVerificationNote').textContent = health.inferenceProvider && health.inferenceProvider !== 'none'
-      ? 'An inference provider is configured. Evaluations will include provider metadata.'
-      : 'No inference provider is configured. Evaluations will fail with INFERENCE_UNAVAILABLE.';
+    if (el('ovVerificationNote')) {
+      el('ovVerificationNote').textContent = health.inferenceProvider && health.inferenceProvider !== 'none'
+        ? 'An inference provider is configured. Evaluations will include provider metadata.'
+        : 'No inference provider is configured. Evaluations will fail with INFERENCE_UNAVAILABLE.';
+    }
   } catch (error) {
-    pill.className = 'status-pill status-error';
-    pillText.textContent = 'Service unreachable';
-    el('ovApiStatus').textContent = 'Unreachable';
-    el('ovApiHint').textContent = error.message;
-    el('ovModel').textContent = '—';
-    ['hcApi', 'hcModel'].forEach((id) => el(id).classList.add('loaded'));
-    el('ovVerificationNote').textContent = 'Service status could not be determined.';
+    if (pill) pill.className = 'status-pill status-error';
+    if (pillText) pillText.textContent = 'Service unreachable';
+    if (el('ovApiStatus')) el('ovApiStatus').textContent = 'Unreachable';
+    if (el('ovApiHint')) el('ovApiHint').textContent = error.message;
+    if (el('ovModel')) el('ovModel').textContent = '—';
+    ['hcApi', 'hcModel'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('loaded');
+    });
+    if (el('ovVerificationNote')) el('ovVerificationNote').textContent = 'Service status could not be determined.';
   }
 };
 
@@ -1222,10 +1284,5 @@ window.addEventListener('DOMContentLoaded', () => {
     renderSessionActivity();
     renderHistory();
     toast('Session history cleared.', 'info');
-  });
-  
-  // Manual scoring - render when switching to manual-scoring view
-  document.querySelector('.nav-item[data-view="manual-scoring"]')?.addEventListener('click', () => {
-    setTimeout(renderManualScoring, 50);
   });
 });

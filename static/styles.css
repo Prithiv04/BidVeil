@@ -91,7 +91,14 @@ body {
   background: var(--accent); color: #ffffff;
 }
 .sidebar-footer { padding: 14px 16px 18px; border-top: 1px solid var(--border-soft); }
-.sidebar-scrim { display: none; }
+.sidebar-scrim { 
+  display: none; 
+  position: fixed; 
+  inset: 0; 
+  background: rgba(0, 0, 0, 0.5); 
+  z-index: 35; 
+}
+.sidebar-scrim.show { display: block; }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
@@ -864,4 +871,24 @@ select.input-sm { cursor: pointer; }
   .mini-stats { flex-direction: column; }
   .lifecycle, .arch-flow { flex-direction: column; }
   .lc-arrow, .arch-arrow { transform: rotate(90deg); align-self: center; padding: 4px 0; }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: -260px;
+    transition: left 0.3s ease;
+  }
+  .sidebar.open {
+    left: 0;
+  }
+  .menu-btn {
+    display: grid;
+  }
+  .sidebar-scrim {
+    display: block;
+  }
+  .sidebar-scrim.show {
+    display: block;
+  }
 }
