@@ -478,10 +478,10 @@ select.input-sm { cursor: pointer; }
   padding: 6px 13px; border-radius: 8px; letter-spacing: 0.02em;
 }
 .badge-lg { font-size: 14px; padding: 9px 18px; border-radius: 10px; }
-.badge.success, .badge.model_tee { background: var(--success-soft); color: var(--success); border: 1px solid rgba(52,211,153,0.4); }
-.badge.warning, .badge.gateway_only, .badge.signature_verified, .badge.attestation_verified, .badge.attestation_pending { background: var(--warning-soft); color: var(--warning); border: 1px solid rgba(251,191,36,0.4); }
-.badge.danger, .badge.verification_failed { background: var(--danger-soft); color: var(--danger); border: 1px solid rgba(248,113,113,0.4); }
-.badge.neutral, .badge.waiting { background: var(--bg-raise); color: var(--neutral); border: 1px solid var(--border); }
+.badge.success { background: var(--success-soft); color: var(--success); border: 1px solid rgba(52,211,153,0.4); }
+.badge.warning { background: var(--warning-soft); color: var(--warning); border: 1px solid rgba(251,191,36,0.4); }
+.badge.danger { background: var(--danger-soft); color: var(--danger); border: 1px solid rgba(248,113,113,0.4); }
+.badge.neutral { background: var(--bg-raise); color: var(--neutral); border: 1px solid var(--border); }
 .verify-stat strong { font-size: 16px; }
 .verify-stat.ok strong { color: var(--success); }
 .verify-stat.warn strong { color: var(--warning); }

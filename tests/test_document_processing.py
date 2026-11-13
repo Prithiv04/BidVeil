@@ -7,7 +7,7 @@ from pypdf import PdfWriter
 from werkzeug.datastructures import FileStorage
 
 import app as bidveil
-import near_ai
+import inference
 
 
 def make_text_pdf(text: str = "Readable bid proposal text") -> bytes:
@@ -86,17 +86,10 @@ def sample_ai_output_for_test(name: str = "Vendor A") -> dict:
     }
     return {
         "response": {"content": json.dumps({"vendors": [vendor]})},
-        "verification": {
-            "mode": "test",
-            "model": bidveil.MODEL_NAME,
-            "nonce": "test-nonce",
-            "attestationVerified": False,
-            "gatewayVerified": False,
-            "modelVerified": False,
-            "responseSignatureKind": "unavailable",
-            "completionId": None,
-            "status": "No external attestation was performed by the test stub.",
-        },
+        "verification": inference.empty_verification(
+            state=inference.STATE_INFERENCE_COMPLETED,
+            status="Test mock inference completed",
+        ),
     }
 
 
@@ -188,13 +181,13 @@ def test_successful_evaluation_uses_extracted_text_and_cleans_temp_files(
 ):
     prompts = []
 
-    async def fake_near_ai(prompt, nonce, on_verifying=None):
+    async def fake_inference(prompt, nonce, on_verifying=None):
         prompts.append(prompt)
         if on_verifying:
             on_verifying()
         return sample_ai_output_for_test()
 
-    monkeypatch.setattr(bidveil, "call_near_ai", fake_near_ai)
+    monkeypatch.setattr(bidveil, "call_inference", fake_inference)
     payload = bid_payload()
     upload = file_upload(
         make_text_pdf("Confidential quote 123"),
@@ -221,7 +214,7 @@ def test_failed_inference_cleans_temp_files(tmp_path, monkeypatch):
     async def failing_near_ai(_prompt, _nonce, _on_verifying=None):
         raise RuntimeError("upstream request failed")
 
-    monkeypatch.setattr(bidveil, "call_near_ai", failing_near_ai)
+    monkeypatch.setattr(bidveil, "call_inference", failing_near_ai)
     result, status = bidveil.process_evaluation(
         bid_payload(),
         {0: [file_upload(b"bid contents", "bid.txt", "text/plain")]},
@@ -230,7 +223,6 @@ def test_failed_inference_cleans_temp_files(tmp_path, monkeypatch):
 
     assert status == 502
     assert result["processing"][-1]["state"] == "cleanup_completed"
-    assert result["verification"]["attestationVerified"] is False
     assert list(tmp_path.iterdir()) == []
 
 
@@ -248,12 +240,12 @@ def test_extraction_failure_cleans_temp_files(tmp_path):
 
 
 def test_concurrent_evaluations_use_isolated_temporary_directories(tmp_path, monkeypatch):
-    async def fake_near_ai(_prompt, _nonce, on_verifying=None):
+    async def fake_inference(_prompt, _nonce, on_verifying=None):
         if on_verifying:
             on_verifying()
         return sample_ai_output_for_test()
 
-    monkeypatch.setattr(bidveil, "call_near_ai", fake_near_ai)
+    monkeypatch.setattr(bidveil, "call_inference", fake_inference)
 
     def run_one(index):
         return bidveil.process_evaluation(
@@ -282,12 +274,12 @@ def test_concurrent_evaluations_use_isolated_temporary_directories(tmp_path, mon
 
 
 def test_multipart_evaluation_route_extracts_and_returns_status(monkeypatch):
-    async def fake_near_ai(_prompt, _nonce, on_verifying=None):
+    async def fake_inference(_prompt, _nonce, on_verifying=None):
         if on_verifying:
             on_verifying()
         return sample_ai_output_for_test()
 
-    monkeypatch.setattr(bidveil, "call_near_ai", fake_near_ai)
+    monkeypatch.setattr(bidveil, "call_inference", fake_inference)
     client = bidveil.app.test_client()
     response = client.post(
         "/api/evaluate",
@@ -305,12 +297,12 @@ def test_multipart_evaluation_route_extracts_and_returns_status(monkeypatch):
 
 
 def test_stream_endpoint_reports_processing_stages_in_order(monkeypatch):
-    async def fake_near_ai(_prompt, _nonce, on_verifying=None):
+    async def fake_inference(_prompt, _nonce, on_verifying=None):
         if on_verifying:
             on_verifying()
         return sample_ai_output_for_test()
 
-    monkeypatch.setattr(bidveil, "call_near_ai", fake_near_ai)
+    monkeypatch.setattr(bidveil, "call_inference", fake_inference)
     response = bidveil.app.test_client().post(
         "/api/evaluate/stream",
         data={
@@ -333,7 +325,7 @@ def test_stream_endpoint_reports_processing_stages_in_order(monkeypatch):
         "Extracting document",
         "Extracted document: bid.txt",
         "Preparing confidential analysis",
-        "Verifying attestation",
+        "Running inference",
         "Evaluation completed",
         "Cleanup completed",
     ]
@@ -351,30 +343,42 @@ def test_unconfigured_near_service_never_returns_fabricated_scores(monkeypatch):
     assert response.status_code == 503
     body = response.get_json()
     assert "vendors" not in body
-    assert body["verification"]["attestationVerified"] is False
     assert body["processing"][-1]["state"] == "cleanup_completed"
 
 
-def test_health_endpoint_reports_service_configuration(monkeypatch):
-    monkeypatch.delenv("NEARAI_API_KEY", raising=False)
+def test_health_endpoint_reports_service_configuration():
     response = bidveil.app.test_client().get("/api/health")
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body["teeMode"] == "unconfigured"
-    assert body["apiConfigured"] is False
     assert body["status"] == "ok"
-    assert isinstance(body["model"], str) and body["model"]
-    assert isinstance(body["verificationStates"], list)
-    assert near_ai.STATE_MODEL_TEE_VERIFIED in body["verificationStates"]
-    assert near_ai.STATE_VERIFICATION_UNAVAILABLE in body["verificationStates"]
+    assert body["inferenceProvider"] == "none"
 
 
 def test_health_endpoint_reports_configured_key(monkeypatch):
-    monkeypatch.setenv("NEARAI_API_KEY", "test-key")
     response = bidveil.app.test_client().get("/api/health")
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body["apiConfigured"] is True
-    assert body["teeMode"] == "live"
+    assert body["status"] == "ok"
+    assert body["inferenceProvider"] == "none"
+
+
+def test_inference_unavailable_when_no_provider_configured(tmp_path):
+    """Test that evaluation fails with INFERENCE_UNAVAILABLE when no provider is configured."""
+    payload = bid_payload()
+    uploads = {
+        0: [file_upload(b"bid contents", "bid.txt", "text/plain")]
+    }
+
+    result, status = bidveil.process_evaluation(
+        payload,
+        uploads,
+        str(tmp_path),
+    )
+
+    assert status == 503
+    assert "error" in result
+    assert "inference" in result["error"].lower()
+    assert result["verification"]["state"] == inference.STATE_INFERENCE_UNAVAILABLE
+    assert result["verification"]["mode"] == "none"

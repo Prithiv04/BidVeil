@@ -13,7 +13,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from pypdf import PdfReader
 from werkzeug.datastructures import FileStorage
 
-import near_ai
+import inference
 
 load_dotenv()
 
@@ -28,8 +28,6 @@ DEFAULT_WEIGHTS = {
     "eligibility_and_documentation": 0.10,
 }
 
-MODEL_NAME = near_ai.configured_model()
-LIVE_API_URL = near_ai.LIVE_API_URL
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MAX_EXTRACTED_CHARACTERS_PER_DOCUMENT = 2_000_000
 MAX_TOTAL_EXTRACTED_CHARACTERS = 10_000_000
@@ -51,7 +49,7 @@ class EvaluationServiceError(Exception):
 
 
 def generate_nonce() -> str:
-    return near_ai.generate_nonce()
+    return inference.generate_nonce()
 
 
 def parse_json_blob(content: str) -> Any:
@@ -177,31 +175,24 @@ Scoring instructions:
 """
 
 
-async def call_near_ai(
+async def call_inference(
     prompt: str,
     nonce: str,
     on_verifying: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     def on_progress(stage: str) -> None:
-        if on_verifying is not None and stage in {
-            "attestation_pending",
-            "attestation_verify",
-            "signature_verify",
-        }:
+        if on_verifying is not None and stage == "inference":
             on_verifying()
 
     try:
-        result = await near_ai.run_verified_inference(
+        result = await inference.run_inference(
             prompt,
-            nonce=nonce,
-            model=MODEL_NAME,
+            model=None,
             on_progress=on_progress,
         )
-    except near_ai.NearAIUnavailableError as error:
+    except inference.InferenceUnavailableError as error:
         raise EvaluationServiceError(str(error), error.status_code) from error
-    except near_ai.UnsupportedModelError as error:
-        raise EvaluationServiceError(str(error), error.status_code) from error
-    except near_ai.NearAIError as error:
+    except inference.InferenceError as error:
         raise EvaluationServiceError(str(error), error.status_code) from error
 
     return {
@@ -256,11 +247,11 @@ async def evaluate_bids(
 
     nonce = generate_nonce()
     prompt = build_evaluation_prompt(tender, bids, nonce)
-    ai_response = await call_near_ai(prompt, nonce, on_verifying)
+    ai_response = await call_inference(prompt, nonce, on_verifying)
     content = ai_response.get("response", {}).get("content") or "{}"
     parsed = parse_json_blob(content)
     if not isinstance(parsed, dict) or not isinstance(parsed.get("vendors"), list):
-        raise EvaluationServiceError("NEAR AI returned an invalid evaluation response.")
+        raise EvaluationServiceError("Inference provider returned an invalid evaluation response.")
 
     normalized = []
     for vendor in parsed.get("vendors") or []:
@@ -272,7 +263,7 @@ async def evaluate_bids(
         normalized.append(vendor)
 
     if not normalized:
-        raise EvaluationServiceError("NEAR AI returned no vendor evaluations.")
+        raise EvaluationServiceError("Inference provider returned no vendor evaluations.")
 
     ranked_vendors = derive_final_scores(normalized, tender)
     for index, vendor in enumerate(ranked_vendors, start=1):
@@ -289,7 +280,7 @@ async def evaluate_bids(
             "serverSideRetention": "BIDVEIL does not intentionally persist uploaded bid content, prompts, or inference responses.",
             "temporaryStorage": "Uploads are held in a unique request-scoped temporary directory and removed at request completion.",
             "memoryErasure": "Process memory is released by normal runtime lifecycle; cryptographic memory erasure is not guaranteed.",
-            "externalProcessing": "Bid text is sent to NEAR AI Cloud; its applicable service retention and processing policies are outside BIDVEIL's control.",
+            "externalProcessing": "Bid text is sent to an inference provider when configured. The provider's retention and processing policies are outside BIDVEIL's control.",
         },
         "summary": {
             "winner": ranked_vendors[0]["vendorName"] if ranked_vendors else "No vendor available",
@@ -452,19 +443,10 @@ def process_evaluation(
             emit("preparing", "Preparing confidential analysis")
 
             def mark_verifying() -> None:
-                emit("verifying", "Verifying attestation")
+                emit("verifying", "Running inference")
 
             result = asyncio.run(evaluate_bids(payload, mark_verifying))
             verification = result.get("verification") or {}
-            state = verification.get("state")
-            if state == near_ai.STATE_GATEWAY_ONLY:
-                verification["status"] = (
-                    "Gateway signature verified; model TEE execution is not proven"
-                )
-            elif state == near_ai.STATE_MODEL_TEE_VERIFIED:
-                verification["status"] = (
-                    "Model TEE signature verified by the official NEAR AI Inference SDK."
-                )
             emit("evaluation_completed", "Evaluation completed")
     except DocumentInputError as error:
         failure = str(error)
@@ -508,12 +490,11 @@ def process_evaluation(
             "error": failure,
             "documents": document_statuses,
             "processing": processing,
-            "verification": near_ai.empty_verification(
-                state=near_ai.STATE_VERIFICATION_UNAVAILABLE
+            "verification": inference.empty_verification(
+                state=inference.STATE_INFERENCE_UNAVAILABLE
                 if response_status in {503, 504}
-                else near_ai.STATE_VERIFICATION_FAILED,
-                model=MODEL_NAME,
-                status="TEE verification unavailable",
+                else inference.STATE_INFERENCE_FAILED,
+                status="Inference unavailable",
                 failure_reason=failure,
             ),
         }, response_status
@@ -536,19 +517,7 @@ def index():
 def healthcheck():
     return jsonify({
         "status": "ok",
-        "model": MODEL_NAME,
-        "teeMode": "live" if os.getenv("NEARAI_API_KEY") else "unconfigured",
-        "apiConfigured": bool(os.getenv("NEARAI_API_KEY")),
-        "verificationStates": [
-            near_ai.STATE_WAITING,
-            near_ai.STATE_ATTESTATION_PENDING,
-            near_ai.STATE_ATTESTATION_VERIFIED,
-            near_ai.STATE_SIGNATURE_VERIFIED,
-            near_ai.STATE_MODEL_TEE_VERIFIED,
-            near_ai.STATE_GATEWAY_ONLY,
-            near_ai.STATE_VERIFICATION_FAILED,
-            near_ai.STATE_VERIFICATION_UNAVAILABLE,
-        ],
+        "inferenceProvider": "none",
     })
 
 
@@ -611,14 +580,14 @@ def evaluate_stream_route():
             )
         except Exception:
             result = {
-                "error": "Evaluation failed; verification is unavailable.",
-                "verification": near_ai.empty_verification(
-                    state=near_ai.STATE_VERIFICATION_UNAVAILABLE,
-                    status="TEE verification unavailable",
-                    failure_reason="Evaluation failed; verification is unavailable.",
+                "error": "Evaluation failed; inference is unavailable.",
+                "verification": inference.empty_verification(
+                    state=inference.STATE_INFERENCE_UNAVAILABLE,
+                    status="Inference unavailable",
+                    failure_reason="Evaluation failed; inference is unavailable.",
                 ),
                 "processing": [
-                    {"state": "failed", "status": "Failed / verification unavailable"},
+                    {"state": "failed", "status": "Failed / inference unavailable"},
                     {"state": "cleanup_completed", "status": "Cleanup completed"},
                 ],
             }
@@ -650,11 +619,11 @@ def request_too_large(_error):
     return jsonify({
         "error": "The upload exceeds the 50 MB request limit.",
         "processing": [
-            {"state": "failed", "status": "Failed / verification unavailable"},
+            {"state": "failed", "status": "Failed / inference unavailable"},
             {"state": "cleanup_completed", "status": "Cleanup completed"},
         ],
-        "verification": near_ai.empty_verification(
-            state=near_ai.STATE_VERIFICATION_UNAVAILABLE,
+        "verification": inference.empty_verification(
+            state=inference.STATE_INFERENCE_UNAVAILABLE,
             status="Request rejected before evaluation.",
             failure_reason="The upload exceeds the 50 MB request limit.",
         ),

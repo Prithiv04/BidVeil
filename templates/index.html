@@ -37,7 +37,7 @@
           </button>
           <button class="nav-item" data-view="verification">
             <svg viewBox="0 0 24 24" class="nav-icon"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
-            <span>Verification</span>
+            <span>Evaluation Integrity</span>
             <span id="verifyNavBadge" class="nav-badge" hidden></span>
           </button>
           <button class="nav-item" data-view="history">
@@ -85,7 +85,7 @@
               <div class="hero-text">
                 <div class="eyebrow">Confidential procurement intelligence</div>
                 <h2>Evaluate tenders with verifiable AI</h2>
-                <p>BIDVEIL extracts evidence from bid documents, scores vendors against your criteria, and cryptographically verifies every inference through the NEAR AI Cloud TEE pipeline. Nothing is persisted.</p>
+                <p>BIDVEIL extracts evidence from bid documents, scores vendors against your criteria, and provides evaluation integrity information. Nothing is persisted.</p>
                 <div class="hero-actions">
                   <button class="btn btn-primary" id="ctaEvaluate">New evaluation</button>
                   <button class="btn btn-ghost" id="ctaDemo">Load demo tender</button>
@@ -103,20 +103,10 @@
                 <strong id="ovApiStatus">—</strong>
                 <span class="stat-hint" id="ovApiHint">Checking…</span>
               </div>
-              <div class="stat-card skeleton-card" id="hcTee">
-                <label>NEAR AI Cloud</label>
-                <strong id="ovTeeMode">—</strong>
-                <span class="stat-hint" id="ovTeeHint">Checking…</span>
-              </div>
               <div class="stat-card skeleton-card" id="hcModel">
-                <label>Inference model</label>
+                <label>Inference provider</label>
                 <strong id="ovModel" class="mono">—</strong>
-                <span class="stat-hint">Resolved per evaluation</span>
-              </div>
-              <div class="stat-card skeleton-card" id="hcStates">
-                <label>Verification states</label>
-                <strong id="ovStates">—</strong>
-                <span class="stat-hint">Defined by backend</span>
+                <span class="stat-hint">Provider status</span>
               </div>
             </div>
 
@@ -144,20 +134,19 @@
                 <ol class="flow-steps">
                   <li><span class="flow-num">1</span><div><strong>Submit tender &amp; bids</strong><p>Tender criteria plus vendor proposals and PDF/TXT documents.</p></div></li>
                   <li><span class="flow-num">2</span><div><strong>Ephemeral extraction</strong><p>Text is extracted in a request-scoped temp directory, then deleted.</p></div></li>
-                  <li><span class="flow-num">3</span><div><strong>Verified inference</strong><p>NEAR AI Cloud runs the model inside a TEE with nonce-bound attestation.</p></div></li>
+                  <li><span class="flow-num">3</span><div><strong>AI inference</strong><p>When configured, an inference provider analyzes bid text and extracts evidence.</p></div></li>
                   <li><span class="flow-num">4</span><div><strong>Deterministic scoring</strong><p>Evidence is scored by fixed weights — the AI never picks a winner.</p></div></li>
-                  <li><span class="flow-num">5</span><div><strong>Verifiable report</strong><p>Cryptographic evidence travels with every result.</p></div></li>
+                  <li><span class="flow-num">5</span><div><strong>Results report</strong><p>Rankings, scores, and provider metadata are returned.</p></div></li>
                 </ol>
               </div>
             </div>
 
             <div class="card">
-              <div class="card-head"><h3>Verification availability</h3></div>
+              <div class="card-head"><h3>Evaluation integrity</h3></div>
               <p class="prose">
-                BIDVEIL performs cryptographic verification through the official NEAR AI Inference SDK.
-                A <strong>gateway signature</strong> proves the response passed through the verified NEAR AI gateway.
-                A <strong>provider_tee signature</strong> additionally proves the model executed inside a Trusted Execution Environment.
-                BIDVEIL never displays <span class="mono">MODEL_TEE_VERIFIED</span> unless the backend returns that state.
+                BIDVEIL validates document structure, extracts text ephemerally, and runs deterministic weighted scoring.
+                When an inference provider is configured, evaluation results include provider metadata.
+                Without a provider, evaluations fail with a clear <span class="mono">INFERENCE_UNAVAILABLE</span> status.
               </p>
               <p class="prose muted" id="ovVerificationNote"></p>
             </div>
@@ -310,11 +299,11 @@
             </div>
           </section>
 
-          <!-- ================= VERIFICATION ================= -->
+          <!-- ================= EVALUATION INTEGRITY ================= -->
           <section class="view" id="view-verification">
             <div class="verify-hero card" id="verifyHero">
               <div class="verify-hero-left">
-                <div class="eyebrow">Cryptographic verification</div>
+                <div class="eyebrow">Evaluation integrity</div>
                 <div class="verify-state-row">
                   <span id="verificationBadge" class="badge badge-lg neutral">WAITING</span>
                   <span id="verificationMode" class="chip chip-ghost">mode: —</span>
@@ -324,44 +313,42 @@
             </div>
 
             <div class="stat-grid stat-grid-3">
-              <div class="stat-card verify-stat" id="vsGateway">
-                <label>Gateway signature</label>
-                <strong id="vsGatewayState">Not performed</strong>
-                <span class="stat-hint">SDK-verified gateway signature</span>
+              <div class="stat-card verify-stat" id="vsValidation">
+                <label>Document validation</label>
+                <strong id="vsValidationState">—</strong>
+                <span class="stat-hint">File type, size, structure</span>
               </div>
-              <div class="stat-card verify-stat" id="vsModel">
-                <label>Model TEE execution</label>
-                <strong id="vsModelState">Not performed</strong>
-                <span class="stat-hint">provider_tee signature required</span>
+              <div class="stat-card verify-stat" id="vsExtraction">
+                <label>Text extraction</label>
+                <strong id="vsExtractionState">—</strong>
+                <span class="stat-hint">PDF/TXT content extracted</span>
               </div>
-              <div class="stat-card verify-stat" id="vsAttestation">
-                <label>Attestation</label>
-                <strong id="vsAttestationState">Not performed</strong>
-                <span class="stat-hint">Nonce-bound report + SDK verify</span>
+              <div class="stat-card verify-stat" id="vsCleanup">
+                <label>Temporary cleanup</label>
+                <strong id="vsCleanupState">—</strong>
+                <span class="stat-hint">Temp directory removed</span>
               </div>
             </div>
 
             <div class="grid-2">
               <div class="card">
-                <div class="card-head"><h3>Verification lifecycle</h3><span class="card-note">Official SDK order</span></div>
+                <div class="card-head"><h3>Evaluation lifecycle</h3><span class="card-note">Application integrity steps</span></div>
                 <ol class="timeline" id="verifyTimeline">
-                  <li data-step="nonce"><span class="tl-dot"></span><div><strong>Fresh nonce generated</strong><p>32-byte per-request nonce prevents replay of stale attestation evidence.</p></div></li>
-                  <li data-step="attestation"><span class="tl-dot"></span><div><strong>Attestation report fetched</strong><p>Live report retrieved from NEAR AI Cloud for the resolved TEE model.</p></div></li>
-                  <li data-step="noncebind"><span class="tl-dot"></span><div><strong>Nonce binding verified</strong><p>Gateway, model and NVIDIA payload attestations must echo the session nonce.</p></div></li>
-                  <li data-step="sdkverify"><span class="tl-dot"></span><div><strong>SDK attestation verified</strong><p>Official InferenceClient.verify() validates the attestation chain.</p></div></li>
-                  <li data-step="inference"><span class="tl-dot"></span><div><strong>Inference executed</strong><p>Chat completion runs on the verified model; request/response retained.</p></div></li>
-                  <li data-step="signature"><span class="tl-dot"></span><div><strong>Response signature verified</strong><p>verify_response() checks signature kind and signed payload hashes.</p></div></li>
-                  <li data-step="result"><span class="tl-dot"></span><div><strong>Result delivered</strong><p>Verification object attached to the evaluation response.</p></div></li>
+                  <li data-step="validation"><span class="tl-dot"></span><div><strong>Document validation</strong><p>File type, size, structure, and extractable text are validated.</p></div></li>
+                  <li data-step="extraction"><span class="tl-dot"></span><div><strong>Text extraction</strong><p>PDF/TXT content is extracted into a request-scoped temporary directory.</p></div></li>
+                  <li data-step="inference"><span class="tl-dot"></span><div><strong>AI inference</strong><p>When configured, the provider analyzes bid text and extracts evidence.</p></div></li>
+                  <li data-step="scoring"><span class="tl-dot"></span><div><strong>Deterministic scoring</strong><p>Fixed weights calculate scores; the AI never selects a winner.</p></div></li>
+                  <li data-step="cleanup"><span class="tl-dot"></span><div><strong>Temporary cleanup</strong><p>The temp directory is removed on success and every failure path.</p></div></li>
                 </ol>
               </div>
 
               <div class="card">
-                <div class="card-head"><h3>Evidence details</h3></div>
+                <div class="card-head"><h3>Evaluation details</h3></div>
                 <dl class="detail-grid" id="verificationDetails"></dl>
                 <div id="verificationUnavailable" class="notice notice-warning" hidden>
-                  <strong>Verification unavailable or failed.</strong>
+                  <strong>Inference unavailable.</strong>
                   <span id="verificationUnavailableText"></span>
-                  The evaluation cannot proceed without a verified inference response. Check the NEAR AI Cloud account billing/spending limit configuration, then retry.
+                  No inference provider is configured. Configure a provider to enable evaluation.
                 </div>
               </div>
             </div>
@@ -381,10 +368,9 @@
                   <input id="historySearch" class="input-sm" type="search" placeholder="Search tender or winner…" />
                   <select id="historyFilter" class="input-sm">
                     <option value="">All states</option>
-                    <option value="MODEL_TEE_VERIFIED">MODEL_TEE_VERIFIED</option>
-                    <option value="GATEWAY_ONLY">GATEWAY_ONLY</option>
-                    <option value="VERIFICATION_FAILED">VERIFICATION_FAILED</option>
-                    <option value="VERIFICATION_UNAVAILABLE">VERIFICATION_UNAVAILABLE</option>
+                    <option value="INFERENCE_COMPLETED">INFERENCE_COMPLETED</option>
+                    <option value="INFERENCE_FAILED">INFERENCE_FAILED</option>
+                    <option value="INFERENCE_UNAVAILABLE">INFERENCE_UNAVAILABLE</option>
                   </select>
                   <button id="historyClear" class="btn btn-sm btn-ghost" type="button">Clear session</button>
                 </div>
@@ -408,9 +394,9 @@
                 <div class="lc-arrow">→</div>
                 <div class="lc-step"><span class="lc-num">2</span><h4>Temporary processing</h4><p>Files land in a unique request-scoped temp directory (<span class="mono">bidveil-*</span>); text is extracted in memory.</p></div>
                 <div class="lc-arrow">→</div>
-                <div class="lc-step"><span class="lc-num">3</span><h4>Private inference</h4><p>Extracted text is sent to NEAR AI Cloud for analysis inside a verified TEE. BIDVEIL cannot control provider retention.</p></div>
+                <div class="lc-step"><span class="lc-num">3</span><h4>AI inference</h4><p>When configured, extracted text is sent to an inference provider for analysis. Provider retention policies are outside BIDVEIL's control.</p></div>
                 <div class="lc-arrow">→</div>
-                <div class="lc-step"><span class="lc-num">4</span><h4>Verification</h4><p>A fresh nonce binds the attestation report; SDK checks signatures and hashes.</p></div>
+                <div class="lc-step"><span class="lc-num">4</span><h4>Scoring</h4><p>Deterministic weighted scoring is applied to extracted evidence.</p></div>
                 <div class="lc-arrow">→</div>
                 <div class="lc-step"><span class="lc-num">5</span><h4>Cleanup</h4><p>The temp directory is removed on success <em>and</em> every failure path; upload streams are closed.</p></div>
               </div>
@@ -422,7 +408,7 @@
                 <ul class="check-list">
                   <li>Validates file type, size and structure before processing.</li>
                   <li>Extracts text ephemerally — originals are never stored.</li>
-                  <li>Sends bid text to NEAR AI Cloud only for the active evaluation.</li>
+                  <li>Sends bid text to an inference provider only for the active evaluation, when configured.</li>
                   <li>Generates a fresh 32-byte nonce per evaluation (replay protection).</li>
                   <li>Deletes temporary files after the request, including failures.</li>
                   <li>Does not intentionally persist uploads, prompts, or responses; does not log tender content.</li>
@@ -432,7 +418,7 @@
                 <div class="card-head"><h3>Limitations — read before use</h3></div>
                 <ul class="check-list warn-list">
                   <li>BIDVEIL cannot guarantee physical memory erasure.</li>
-                  <li>NEAR AI Cloud's retention and logging policies are outside BIDVEIL's control.</li>
+                  <li>Any inference provider's retention and logging policies are outside BIDVEIL's control.</li>
                   <li>Verification proves inference integrity, not data privacy at the provider.</li>
                   <li>Do not submit information unless the provider's terms are acceptable to your organisation.</li>
                   <li>Cleanup is confirmed per-request in the processing log; check it after each run.</li>
@@ -450,9 +436,9 @@
                 <div class="arch-arrow">→</div>
                 <div class="arch-node"><span class="arch-num">2</span><strong>Secure processing</strong><p>Flask validates, extracts text into a request-scoped temp dir.</p><code>app.py · pypdf</code></div>
                 <div class="arch-arrow">→</div>
-                <div class="arch-node"><span class="arch-num">3</span><strong>NEAR AI Cloud inference</strong><p>TEE model resolution, attestation report, nonce binding, chat completion.</p><code>near_ai.py · nearai-inference-sdk</code></div>
+                <div class="arch-node"><span class="arch-num">3</span><strong>Inference provider</strong><p>When configured, an AI provider analyzes bid text and extracts evidence.</p><code>inference.py</code></div>
                 <div class="arch-arrow">→</div>
-                <div class="arch-node"><span class="arch-num">4</span><strong>Cryptographic verification</strong><p>SDK verify + verify_response; signature kind classified honestly.</p><code>ed25519 · e2ee</code></div>
+                <div class="arch-node"><span class="arch-num">4</span><strong>Scoring & results</strong><p>Deterministic weighted scoring applied to extracted evidence.</p><code>app.py</code></div>
                 <div class="arch-arrow">→</div>
                 <div class="arch-node"><span class="arch-num">5</span><strong>Evaluation result</strong><p>Deterministic weighted scoring; SSE stream delivers progress + result.</p><code>Flask SSE</code></div>
               </div>
@@ -462,22 +448,18 @@
               <div class="card">
                 <div class="card-head"><h3>Technology stack</h3></div>
                 <div class="chip-cloud">
-                  <span class="chip">Flask</span><span class="chip">Python 3</span><span class="chip">nearai-inference-sdk</span>
-                  <span class="chip">OpenAI-compatible client</span><span class="chip">httpx</span><span class="chip">pypdf</span>
-                  <span class="chip">Vanilla JS</span><span class="chip">Server-Sent Events</span><span class="chip">ed25519 signatures</span>
+                  <span class="chip">Flask</span><span class="chip">Python 3</span><span class="chip">pypdf</span>
+                  <span class="chip">Vanilla JS</span><span class="chip">Server-Sent Events</span>
                 </div>
               </div>
               <div class="card">
-                <div class="card-head"><h3>Verification states</h3></div>
+                <div class="card-head"><h3>Evaluation states</h3></div>
                 <ul class="state-grid">
-                  <li><span class="mono">WAITING</span> — no verification yet</li>
-                  <li><span class="mono">ATTESTATION_PENDING</span> — report requested</li>
-                  <li><span class="mono">ATTESTATION_VERIFIED</span> — report nonce-bound</li>
-                  <li><span class="mono">SIGNATURE_VERIFIED</span> — response signature verified</li>
-                  <li><span class="mono">MODEL_TEE_VERIFIED</span> — provider_tee signature verified</li>
-                  <li><span class="mono">GATEWAY_ONLY</span> — gateway signature only</li>
-                  <li><span class="mono">VERIFICATION_FAILED</span> — a check failed</li>
-                  <li><span class="mono">VERIFICATION_UNAVAILABLE</span> — could not verify</li>
+                  <li><span class="mono">WAITING</span> — no evaluation yet</li>
+                  <li><span class="mono">INFERENCE_PENDING</span> — inference in progress</li>
+                  <li><span class="mono">INFERENCE_COMPLETED</span> — inference succeeded</li>
+                  <li><span class="mono">INFERENCE_FAILED</span> — inference failed</li>
+                  <li><span class="mono">INFERENCE_UNAVAILABLE</span> — no provider configured</li>
                 </ul>
               </div>
             </div>

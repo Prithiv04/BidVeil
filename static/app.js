@@ -42,7 +42,7 @@ const VIEW_META = {
   overview: ['Overview', 'Command centre for confidential tender evaluation'],
   evaluate: ['Evaluate', 'Configure a tender and submit bids for verified AI evaluation'],
   results: ['Results', 'Winning bidder, score breakdown and evidence'],
-  verification: ['Verification', 'Cryptographic evidence for the latest inference'],
+  verification: ['Evaluation Integrity', 'Application integrity and evaluation status'],
   history: ['History', 'Session-only evaluation records'],
   privacy: ['Privacy', 'How BIDVEIL handles your documents'],
   about: ['About', 'Architecture and technology'],
@@ -460,19 +460,14 @@ const readEvaluationStream = async (response) => {
 
 const verificationExplanationFor = (state, verification = {}) => {
   switch (state) {
-    case 'MODEL_TEE_VERIFIED':
-      return 'The official NEAR AI Inference SDK verified a provider_tee signature: the attestation report was nonce-bound, the model attestation was verified, and the response signature was verified against the retained request and response bytes. This is the strongest verification BIDVEIL reports.';
-    case 'GATEWAY_ONLY':
-      return 'A gateway signature was verified by the SDK, proving the response passed through the verified NEAR AI gateway. The signature kind was gateway, not provider_tee, so model-level TEE execution is NOT proven.';
-    case 'SIGNATURE_VERIFIED':
-    case 'ATTESTATION_VERIFIED':
-      return 'Partial verification completed. See the evidence details for which checks passed and which are unavailable.';
-    case 'VERIFICATION_FAILED':
-      return 'A cryptographic verification check failed. The evaluation result is not trustworthy and should not be used.';
-    case 'VERIFICATION_UNAVAILABLE':
-      return 'Verification could not be performed — typically a provider-side issue such as billing (HTTP 402), connectivity, or timeout. No verification claims are made.';
-    case 'ATTESTATION_PENDING':
-      return 'Attestation verification is in progress.';
+    case 'INFERENCE_COMPLETED':
+      return 'Inference completed successfully. Evaluation results are available.';
+    case 'INFERENCE_FAILED':
+      return 'Inference failed. The evaluation result is not trustworthy and should not be used.';
+    case 'INFERENCE_UNAVAILABLE':
+      return 'No inference provider is configured. Configure a provider to enable evaluation.';
+    case 'INFERENCE_PENDING':
+      return 'Inference is in progress.';
     default:
       return verification.status || 'Waiting for evaluation.';
   }
@@ -480,13 +475,10 @@ const verificationExplanationFor = (state, verification = {}) => {
 
 const badgeClassFor = (state) => {
   const map = {
-    MODEL_TEE_VERIFIED: 'success',
-    GATEWAY_ONLY: 'warning',
-    SIGNATURE_VERIFIED: 'warning',
-    ATTESTATION_VERIFIED: 'warning',
-    ATTESTATION_PENDING: 'warning',
-    VERIFICATION_FAILED: 'danger',
-    VERIFICATION_UNAVAILABLE: 'danger',
+    INFERENCE_COMPLETED: 'success',
+    INFERENCE_PENDING: 'warning',
+    INFERENCE_FAILED: 'danger',
+    INFERENCE_UNAVAILABLE: 'danger',
     WAITING: 'neutral',
   };
   return map[state] || 'neutral';
@@ -499,12 +491,7 @@ const triState = (value) => {
 };
 
 const updateVerificationCard = (verification = {}) => {
-  const signatureKind = verification.responseSignatureKind || verification.signatureType || 'unavailable';
-  const modelTee = verification.state === 'MODEL_TEE_VERIFIED'
-    && verification.modelVerified === true
-    && signatureKind === 'provider_tee';
-  const state = verification.state
-    || (modelTee ? 'MODEL_TEE_VERIFIED' : signatureKind === 'gateway' ? 'GATEWAY_ONLY' : 'WAITING');
+  const state = verification.state || 'WAITING';
 
   const badge = el('verificationBadge');
   badge.textContent = state;
@@ -512,37 +499,29 @@ const updateVerificationCard = (verification = {}) => {
   el('verificationMode').textContent = `mode: ${verification.mode || '—'}`;
   el('verificationExplanation').textContent = verificationExplanationFor(state, verification);
 
-  // Three headline verification stats
-  const gateway = triState(verification.gatewayVerified);
-  const model = verification.state === 'MODEL_TEE_VERIFIED' ? { text: 'TEE verified', cls: 'ok' }
-    : signatureKind === 'gateway' ? { text: 'Gateway only', cls: 'warn' }
-    : triState(verification.modelVerified);
-  const attestation = verification.attestationVerified === true || verification.attestationStatus === 'verified'
-    ? { text: 'Verified', cls: 'ok' }
-    : verification.attestationStatus ? { text: String(verification.attestationStatus), cls: 'warn' }
-    : { text: 'Not performed', cls: 'muted' };
+  // Application integrity stats
+  const validation = triState(verification.validationVerified !== false);
+  const extraction = triState(verification.extractionVerified !== false);
+  const cleanup = triState(verification.cleanupVerified !== false);
 
   const setStat = (id, st) => {
     el(id).querySelector('strong').textContent = st.text;
     el(id).className = `stat-card verify-stat ${st.cls}`;
   };
-  setStat('vsGatewayState', gateway);
-  setStat('vsModelState', model);
-  setStat('vsAttestationState', attestation);
+  setStat('vsValidationState', validation);
+  setStat('vsExtractionState', extraction);
+  setStat('vsCleanupState', cleanup);
 
-  // Lifecycle timeline — honest about how far verification progressed
+  // Lifecycle timeline — application integrity steps
   const reached = {
     WAITING: [],
-    ATTESTATION_PENDING: ['nonce', 'attestation'],
-    ATTESTATION_VERIFIED: ['nonce', 'attestation', 'noncebind', 'sdkverify'],
-    SIGNATURE_VERIFIED: ['nonce', 'attestation', 'noncebind', 'sdkverify', 'inference', 'signature'],
-    MODEL_TEE_VERIFIED: ['nonce', 'attestation', 'noncebind', 'sdkverify', 'inference', 'signature', 'result'],
-    GATEWAY_ONLY: ['nonce', 'attestation', 'noncebind', 'sdkverify', 'inference', 'signature', 'result'],
-    VERIFICATION_FAILED: ['nonce', 'attestation', 'noncebind', 'sdkverify', 'inference', 'signature'],
-    VERIFICATION_UNAVAILABLE: [],
+    INFERENCE_PENDING: ['validation', 'extraction'],
+    INFERENCE_COMPLETED: ['validation', 'extraction', 'inference', 'scoring', 'cleanup'],
+    INFERENCE_FAILED: ['validation', 'extraction'],
+    INFERENCE_UNAVAILABLE: [],
   }[state] || [];
-  const failedAt = state === 'VERIFICATION_FAILED' ? 'signature' : null;
-  const unavailable = state === 'VERIFICATION_UNAVAILABLE';
+  const failedAt = state === 'INFERENCE_FAILED' ? 'inference' : null;
+  const unavailable = state === 'INFERENCE_UNAVAILABLE';
 
   document.querySelectorAll('#verifyTimeline li').forEach((li) => {
     const step = li.dataset.step;
@@ -550,43 +529,23 @@ const updateVerificationCard = (verification = {}) => {
     if (unavailable) { li.classList.add('todo'); return; }
     const idx = reached.indexOf(step);
     if (failedAt === step) li.classList.add('failed');
-    else if (idx === reached.length - 1 && state !== 'VERIFICATION_FAILED') li.classList.add('done');
+    else if (idx === reached.length - 1 && state !== 'INFERENCE_FAILED') li.classList.add('done');
     else if (idx >= 0) li.classList.add('done');
     else li.classList.add('todo');
   });
 
   // Evidence detail grid
-  const evidence = Array.isArray(verification.evidenceIds) && verification.evidenceIds.length
-    ? verification.evidenceIds.join(', ') : 'none reported';
-  const unavailableChecks = Array.isArray(verification.unavailableChecks) && verification.unavailableChecks.length
-    ? verification.unavailableChecks.join(' ') : 'none';
   const rows = [
-    ['Verification status', state, true],
+    ['Evaluation status', state, true],
     ['Mode', verification.mode || '—', true],
-    ['Selected model', verification.model || 'pending', true],
-    ['Model identity', verification.modelIdentity || 'not reported', true],
-    ['Provider type', verification.providerType || 'not reported', true],
-    ['Attestation status', verification.attestationStatus || (verification.gatewayVerified ? 'gateway checked' : 'pending'), true],
-    ['Nonce', verification.nonce || 'not reported', true],
-    ['Nonce verified', verification.nonceVerified === true ? 'matched' : 'not verified', true],
-    ['Signature verified', verification.signatureVerified === true ? 'yes' : 'no', true],
-    ['Signature kind', signatureKind, true],
-    ['Hash verified', verification.hashVerified === true ? 'signed payload parsed' : 'not verified', true],
-    ['Signed model id', verification.signedModelId || 'not reported', true],
-    ['Completion id', verification.completionId || 'not reported', true],
-    ['Request hash', verification.requestHash || 'not reported', true],
-    ['Response hash', verification.responseHash || 'not reported', true],
-    ['Verified at', verification.verifiedAt || 'not reported', true],
-    ['GPU evidence', verification.gpuEvidence || 'unavailable', true],
-    ['Evidence identifiers', evidence, false],
-    ['Unavailable checks', unavailableChecks, false],
+    ['Model', verification.model || 'not configured', true],
     ['Failure explanation', verification.failureReason || verification.status || 'none', false],
   ];
   el('verificationDetails').innerHTML = rows.map(([k, v, mono]) => `
     <div class="dk">${escapeHtml(k)}</div><div class="dv ${mono ? '' : 'wrap'}">${escapeHtml(v)}</div>`).join('');
 
   const notice = el('verificationUnavailable');
-  if (state === 'VERIFICATION_UNAVAILABLE' || state === 'VERIFICATION_FAILED') {
+  if (state === 'INFERENCE_UNAVAILABLE' || state === 'INFERENCE_FAILED') {
     notice.hidden = false;
     el('verificationUnavailableText').textContent = verification.failureReason || verification.status || '';
   } else {
@@ -595,9 +554,8 @@ const updateVerificationCard = (verification = {}) => {
 
   // Nav badge reflects latest state
   const navBadge = el('verifyNavBadge');
-  if (state === 'MODEL_TEE_VERIFIED') { navBadge.hidden = false; navBadge.textContent = 'TEE'; }
-  else if (state === 'GATEWAY_ONLY') { navBadge.hidden = false; navBadge.textContent = 'GW'; }
-  else if (state === 'VERIFICATION_FAILED' || state === 'VERIFICATION_UNAVAILABLE') { navBadge.hidden = false; navBadge.textContent = '!'; }
+  if (state === 'INFERENCE_COMPLETED') { navBadge.hidden = false; navBadge.textContent = 'OK'; }
+  else if (state === 'INFERENCE_FAILED' || state === 'INFERENCE_UNAVAILABLE') { navBadge.hidden = false; navBadge.textContent = '!'; }
   else navBadge.hidden = true;
 };
 
@@ -850,41 +808,29 @@ const loadHealth = async () => {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const health = await res.json();
 
-    const configured = health.apiConfigured === true;
-    const teeLive = health.teeMode === 'live';
-
     el('ovApiStatus').textContent = health.status === 'ok' ? 'Operational' : 'Degraded';
     el('ovApiHint').textContent = 'BIDVEIL service responding';
-    el('ovTeeMode').textContent = teeLive ? 'Live' : 'Unconfigured';
-    el('ovTeeHint').textContent = teeLive ? 'API key configured — inference enabled' : 'NEARAI_API_KEY not set';
-    el('ovModel').textContent = health.model || '—';
-    el('ovStates').textContent = Array.isArray(health.verificationStates) ? String(health.verificationStates.length) : '—';
-    ['hcApi', 'hcTee', 'hcModel', 'hcStates'].forEach((id) => el(id).classList.add('loaded'));
+    el('ovModel').textContent = health.inferenceProvider || 'none';
+    ['hcApi', 'hcModel'].forEach((id) => el(id).classList.add('loaded'));
 
-    if (configured && teeLive) {
+    if (health.inferenceProvider && health.inferenceProvider !== 'none') {
       pill.className = 'status-pill status-ok';
-      pillText.textContent = 'NEAR AI Cloud connected';
-    } else if (configured) {
-      pill.className = 'status-pill status-degraded';
-      pillText.textContent = 'Verification limited';
+      pillText.textContent = 'Provider configured';
     } else {
       pill.className = 'status-pill status-degraded';
-      pillText.textContent = 'NEARAI_API_KEY not configured';
+      pillText.textContent = 'No provider configured';
     }
 
-    el('ovVerificationNote').textContent = teeLive
-      ? 'Live verification is configured. Whether model-level TEE is proven depends on the signature kind returned by the provider for each evaluation.'
-      : 'Live NEAR AI Cloud verification is not currently configured. The UI will report VERIFICATION_UNAVAILABLE honestly rather than simulating verification.';
+    el('ovVerificationNote').textContent = health.inferenceProvider && health.inferenceProvider !== 'none'
+      ? 'An inference provider is configured. Evaluations will include provider metadata.'
+      : 'No inference provider is configured. Evaluations will fail with INFERENCE_UNAVAILABLE.';
   } catch (error) {
     pill.className = 'status-pill status-error';
     pillText.textContent = 'Service unreachable';
     el('ovApiStatus').textContent = 'Unreachable';
     el('ovApiHint').textContent = error.message;
-    el('ovTeeMode').textContent = 'Unknown';
-    el('ovTeeHint').textContent = 'Health check failed';
     el('ovModel').textContent = '—';
-    el('ovStates').textContent = '—';
-    ['hcApi', 'hcTee', 'hcModel', 'hcStates'].forEach((id) => el(id).classList.add('loaded'));
+    ['hcApi', 'hcModel'].forEach((id) => el(id).classList.add('loaded'));
     el('ovVerificationNote').textContent = 'Service status could not be determined.';
   }
 };
@@ -947,13 +893,9 @@ const handleEvaluate = async () => {
   } catch (error) {
     updateVerificationCard({
       mode: 'error',
-      state: 'VERIFICATION_FAILED',
+      state: 'INFERENCE_FAILED',
       status: error.message,
       failureReason: error.message,
-      responseSignatureKind: 'unavailable',
-      attestationVerified: false,
-      gatewayVerified: false,
-      modelVerified: false,
     });
     if (!el('processingDetails').children.length) appendLog('Failed / verification unavailable');
     el('resultsEmpty').hidden = false;
