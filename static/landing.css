@@ -64,7 +64,6 @@ button {
   z-index: 1000;
   background: rgba(10, 14, 20, 0.95);
   backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border-subtle);
 }
 
 .nav-container {
@@ -167,7 +166,7 @@ button {
   display: grid;
   grid-template-columns: 1fr 1.1fr;
   gap: 3rem;
-  align-items: center;
+  align-items: start;
 }
 
 .hero-content {
@@ -299,7 +298,6 @@ button {
   align-items: center;
   margin-bottom: 1rem;
   padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
 }
 
 .panel-ref {
@@ -383,7 +381,6 @@ button {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-primary), var(--accent-gold));
   border-radius: 2px;
-  transition: width 1s ease;
 }
 
 .progress-label {
@@ -476,7 +473,6 @@ button {
 .score-fill {
   height: 100%;
   border-radius: 3px;
-  transition: width 0.5s ease;
 }
 
 .score-ai {
@@ -864,7 +860,6 @@ button {
 
 .connector-track {
   height: 2px;
-  background: linear-gradient(90deg, transparent, var(--border-medium), transparent);
   position: relative;
 }
 
@@ -1158,7 +1153,6 @@ button {
 
 .chain-line {
   height: 2px;
-  background: linear-gradient(90deg, transparent, var(--border-medium), transparent);
   position: relative;
   overflow: hidden;
 }
@@ -1170,21 +1164,6 @@ button {
   height: 100%;
   width: 0%;
   background: linear-gradient(90deg, var(--accent-primary), var(--accent-gold));
-  animation: progressFlow 4s ease-in-out infinite;
-}
-
-@keyframes progressFlow {
-  0% {
-    left: 0;
-    width: 0%;
-  }
-  50% {
-    width: 50%;
-  }
-  100% {
-    left: 100%;
-    width: 0%;
-  }
 }
 
 .integrity-note {
