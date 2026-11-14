@@ -56,7 +56,17 @@ body {
   height: 100vh;
   z-index: 40;
 }
-.brand { display: flex; align-items: center; gap: 12px; padding: 22px 20px 18px; }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 20px 18px;
+  text-decoration: none;
+  color: inherit;
+}
+.brand:hover {
+  opacity: 0.9;
+}
 .brand-mark {
   width: 36px; height: 36px; border-radius: 6px;
   background: var(--accent);

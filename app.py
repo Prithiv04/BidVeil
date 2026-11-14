@@ -628,7 +628,12 @@ def process_evaluation(
 
 
 @app.route("/")
-def index():
+def landing():
+    return render_template("landing.html")
+
+
+@app.route("/workspace")
+def workspace():
     return render_template("index.html")
 
 
