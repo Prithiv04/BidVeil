@@ -25,6 +25,7 @@ const CRITERIA_KEYS = [
 const LIMITS = {
   maxFileBytes: 10 * 1024 * 1024,
   maxFilesPerVendor: 10,
+  maxFilesPerTender: 10,
   maxVendors: 20,
   maxRequestBytes: 50 * 1024 * 1024,
   allowedExtensions: ['.pdf', '.txt'],
@@ -40,16 +41,17 @@ const PROGRESS_STEPS = [
 
 const VIEW_META = {
   overview: ['Overview', 'Command centre for confidential tender evaluation'],
-  evaluate: ['Evaluate', 'Configure a tender and submit bids for verified AI evaluation'],
+  evaluate: ['Evaluate', 'Configure a tender and submit bids for AI evaluation'],
   'manual-scoring': ['Manual Scoring', 'Enter bidder scores for manual evaluation'],
   results: ['Results', 'Winning bidder, score breakdown and evidence'],
   verification: ['Evaluation Integrity', 'Application integrity and evaluation status'],
-  history: ['History', 'Session-only evaluation records'],
+  history: ['History', 'Persistent evaluation records retrieved from SQLite'],
   privacy: ['Privacy', 'How BIDVEIL handles your documents'],
   about: ['About', 'Architecture and technology'],
 };
 
-const sessionEvaluations = [];
+const evaluationRecords = [];
+let tenderFileQueue = [];
 let lastPayload = null;
 let lastResult = null;
 let currentView = 'overview';
@@ -122,6 +124,9 @@ const switchView = (name) => {
   // Render manual scoring when switching to that view
   if (name === 'manual-scoring') {
     setTimeout(renderManualScoring, 50);
+  }
+  if (name === 'history') {
+    loadEvaluationRecords().catch((error) => toast(error.message, 'error'));
   }
 };
 
@@ -204,7 +209,7 @@ const addFilesToCard = (card, fileList) => {
   renderFileQueue(card);
 };
 
-const createVendorCard = (name = '', price = '', proposal = '') => `
+const createVendorCard = (name = '', price = '', uei = '') => `
   <div class="vendor-card">
     <div class="vendor-card-header">
       <input class="vendor-name" value="${escapeHtml(name)}" placeholder="Bidder / vendor name" aria-label="Vendor name" />
@@ -216,10 +221,11 @@ const createVendorCard = (name = '', price = '', proposal = '') => `
         <input class="vendor-price" type="number" min="0" value="${escapeHtml(price)}" placeholder="250000" />
       </div>
       <div class="field-group">
-        <label>Proposal summary</label>
-        <textarea class="vendor-proposal" rows="2" placeholder="Describe the bid…">${escapeHtml(proposal)}</textarea>
+        <label>UEI (optional, U.S. SAM.gov lookup)</label>
+        <input class="vendor-uei" maxlength="12" value="${escapeHtml(uei)}" placeholder="12-character UEI" />
       </div>
     </div>
+    <p class="muted">Upload the vendor’s original proposal documents for AI evaluation.</p>
     <div class="field-group" style="margin-bottom:0">
       <label>Bid documents</label>
       <div class="dropzone" tabindex="0" role="button" aria-label="Upload bid documents">
@@ -278,7 +284,7 @@ const bindVendorCard = (card) => {
 
 const renderVendorCards = (vendors) => {
   const container = el('vendorList');
-  container.innerHTML = vendors.map((vendor) => createVendorCard(vendor.name, vendor.price, vendor.proposal)).join('');
+  container.innerHTML = vendors.map((vendor) => createVendorCard(vendor.name, vendor.price, vendor.ueiSAM)).join('');
   container.querySelectorAll('.vendor-card').forEach(bindVendorCard);
   updateReadiness();
 };
@@ -299,7 +305,7 @@ const getFormState = () => {
     bids: cards.map((card) => ({
       vendorName: card.querySelector('.vendor-name').value || 'Unnamed vendor',
       quotedPrice: Number(card.querySelector('.vendor-price').value || 0),
-      proposalText: card.querySelector('.vendor-proposal').value || '',
+      ueiSAM: card.querySelector('.vendor-uei').value.trim(),
     })),
     evaluationMode: el('evaluationMode').value || 'auto',
   };
@@ -307,8 +313,8 @@ const getFormState = () => {
 
 const updateReadiness = () => {
   const cards = Array.from(document.querySelectorAll('.vendor-card'));
-  let docs = 0;
-  let bytes = 0;
+  let docs = tenderFileQueue.length;
+  let bytes = tenderFileQueue.reduce((total, entry) => total + entry.file.size, 0);
   cards.forEach((card) => {
     (card._fileQueue || []).forEach((entry) => {
       docs += 1;
@@ -320,21 +326,52 @@ const updateReadiness = () => {
   el('rdSize').textContent = fmtBytes(bytes);
 };
 
-const loadDemo = () => {
-  el('tenderTitle').value = 'Modern Secure Government Data Platform';
-  el('tenderDescription').value = 'Procurement for a secure government data platform with migration, governance, and modernization requirements.';
-  el('maximumBudget').value = '1000000';
-  el('submissionDeadline').value = '2026-12-31';
-  el('eligibilityRequirements').value = 'Vendor must have three comparable public sector modernizations and valid security certifications.';
-  el('technicalRequirements').value = 'Need secure integration, RBAC, encrypted data transport, monitoring, and phased rollout.';
-  el('evaluationCriteria').value = 'Technical compliance, price competitiveness, relevant experience, delivery timeline, eligibility and documentation.';
+const renderTenderFileQueue = () => {
+  const container = el('tenderFileQueue');
+  container.innerHTML = tenderFileQueue.map((entry, index) => `
+    <div class="file-item ${entry.error ? 'invalid' : ''}">
+      <span class="file-name">${escapeHtml(entry.file.name)}</span>
+      <span class="file-meta">${fmtBytes(entry.file.size)}</span>
+      <button type="button" class="remove" data-tender-remove="${index}" aria-label="Remove ${escapeHtml(entry.file.name)}">Remove</button>
+      ${entry.error ? `<span class="file-error">${escapeHtml(entry.error)}</span>` : ''}
+    </div>`).join('');
+  container.querySelectorAll('[data-tender-remove]').forEach((button) => {
+    button.addEventListener('click', () => {
+      tenderFileQueue.splice(Number(button.dataset.tenderRemove), 1);
+      renderTenderFileQueue();
+    });
+  });
+  updateReadiness();
+};
 
-  renderVendorCards([
-    { name: 'Northstar Systems', price: '740000', proposal: 'Fictional Vendor A: lower quotation with moderate technical compliance, phased migration, and a 10-month delivery window.' },
-    { name: 'Meridian Consulting', price: '910000', proposal: 'Fictional Vendor B: higher quotation with excellent technical compliance, SOC 2 controls, comparable deployments, and a 7-month delivery window.' },
-    { name: 'Helio DataWorks', price: '820000', proposal: 'Fictional Vendor C: competitive quotation with incomplete documentation and missing security certification evidence.' },
-  ]);
-  toast('Demo tender loaded — sample bidders are fictional.', 'info');
+const addTenderFiles = (files) => {
+  Array.from(files || []).forEach((file) => {
+    if (tenderFileQueue.length >= LIMITS.maxFilesPerTender) {
+      toast(`Maximum ${LIMITS.maxFilesPerTender} tender documents.`, 'error');
+      return;
+    }
+    const error = validateFile(file);
+    tenderFileQueue.push({ file, error });
+    if (error) toast(error, 'error');
+  });
+  renderTenderFileQueue();
+};
+
+const buildEvaluationFormData = (payload) => {
+  const formData = new FormData();
+  formData.append('payload', JSON.stringify(payload));
+  let hasUploads = false;
+  tenderFileQueue.forEach((entry, index) => {
+    formData.append(`tender_${index}`, entry.file, entry.file.name);
+    hasUploads = true;
+  });
+  Array.from(document.querySelectorAll('.vendor-card')).forEach((card, index) => {
+    (card._fileQueue || []).forEach((entry) => {
+      formData.append(`bid_${index}`, entry.file, entry.file.name);
+      hasUploads = true;
+    });
+  });
+  return { formData, hasUploads };
 };
 
 /* ================= Validation ================= */
@@ -349,9 +386,29 @@ const validateForm = () => {
   }
 
   let totalBytes = 0;
+  const mode = el('evaluationMode')?.value || 'auto';
+  if (tenderFileQueue.length > LIMITS.maxFilesPerTender) {
+    errors.push(`At most ${LIMITS.maxFilesPerTender} tender documents are allowed.`);
+  }
+  tenderFileQueue.forEach((entry) => {
+    totalBytes += entry.file.size;
+    if (entry.error) errors.push(`Tender document: ${entry.error}`);
+  });
+  const tenderDescription = [
+    el('tenderDescription').value,
+    el('technicalRequirements').value,
+    el('eligibilityRequirements').value,
+    el('evaluationCriteria').value,
+  ].some((value) => value.trim());
+  if (mode === 'auto' && !tenderDescription && !tenderFileQueue.length) {
+    errors.push('Add tender requirements or upload a tender document for AI evaluation.');
+  }
   cards.forEach((card, index) => {
     const label = card.querySelector('.vendor-name').value || `Bidder ${index + 1}`;
     const queue = card._fileQueue || [];
+    if (mode === 'auto' && !queue.length) {
+      errors.push(`${label}: upload at least one original proposal document for AI evaluation.`);
+    }
     if (queue.length > LIMITS.maxFilesPerVendor) {
       errors.push(`${label}: at most ${LIMITS.maxFilesPerVendor} documents (found ${queue.length}).`);
     }
@@ -473,7 +530,7 @@ const verificationExplanationFor = (state, verification = {}) => {
     case 'INFERENCE_FAILED':
       return 'Inference failed. The evaluation result is not trustworthy and should not be used.';
     case 'INFERENCE_UNAVAILABLE':
-      return 'No inference provider is configured. Configure a provider to enable evaluation.';
+      return 'OpenAI is not configured. Set OPENAI_API_KEY to enable AI evaluation.';
     case 'INFERENCE_PENDING':
       return 'Inference is in progress.';
     default:
@@ -508,9 +565,14 @@ const updateVerificationCard = (verification = {}) => {
   el('verificationExplanation').textContent = verificationExplanationFor(state, verification);
 
   // Application integrity stats
-  const validation = triState(verification.validationVerified !== false);
-  const extraction = triState(verification.extractionVerified !== false);
-  const cleanup = triState(verification.cleanupVerified !== false);
+  const validation = triState(verification.validationVerified);
+  const extraction = triState(verification.extractionVerified);
+  const cleanup = triState(verification.cleanupVerified);
+  const recordIntegrity = verification.recordIntegrity?.status === 'verified'
+    ? { text: 'Verified', cls: 'ok' }
+    : verification.recordIntegrity?.status === 'failed'
+      ? { text: 'Failed', cls: 'bad' }
+      : { text: 'Not checked', cls: 'muted' };
 
   const setStat = (id, st) => {
     el(id).querySelector('strong').textContent = st.text;
@@ -525,6 +587,7 @@ const updateVerificationCard = (verification = {}) => {
     WAITING: [],
     INFERENCE_PENDING: ['validation', 'extraction'],
     INFERENCE_COMPLETED: ['validation', 'extraction', 'inference', 'scoring', 'cleanup'],
+    MANUAL_COMPLETED: ['validation', 'extraction', 'scoring', 'cleanup'],
     INFERENCE_FAILED: ['validation', 'extraction'],
     INFERENCE_UNAVAILABLE: [],
   }[state] || [];
@@ -548,6 +611,8 @@ const updateVerificationCard = (verification = {}) => {
     ['Mode', verification.mode || '—', true],
     ['Model', verification.model || 'not configured', true],
     ['Failure explanation', verification.failureReason || verification.status || 'none', false],
+    ['Record integrity', recordIntegrity.text, true],
+    ['Record hash', verification.recordIntegrity?.recordHash || 'not saved', true],
   ];
   el('verificationDetails').innerHTML = rows.map(([k, v, mono]) => `
     <div class="dk">${escapeHtml(k)}</div><div class="dv ${mono ? '' : 'wrap'}">${escapeHtml(v)}</div>`).join('');
@@ -654,7 +719,9 @@ const renderResults = (data) => {
   // Rationale — built only from returned fields
   const rationale = [];
   if (winner) {
-    rationale.push(`<p class="rationale-winner">${escapeHtml(summary.winner || winner.vendorName)} is the recommended awardee</p>`);
+    rationale.push(`<p class="rationale-winner">${escapeHtml(summary.winner || winner.vendorName)} ranks first under the configured scoring.</p>`);
+    if (data.overallRecommendation) rationale.push(`<p>${escapeHtml(data.overallRecommendation)}</p>`);
+    if (winner.recommendation) rationale.push(`<p><strong>Recommendation:</strong> ${escapeHtml(winner.recommendation)}</p>`);
     if (winner.evidenceSummary) rationale.push(`<p>${escapeHtml(winner.evidenceSummary)}</p>`);
     if ((winner.strengths || []).length) rationale.push(`<p><strong>Strengths:</strong> ${escapeHtml(winner.strengths.join(', '))}</p>`);
     if ((winner.weaknesses || []).length) rationale.push(`<p><strong>Weaknesses:</strong> ${escapeHtml(winner.weaknesses.join(', '))}</p>`);
@@ -676,7 +743,20 @@ const renderResults = (data) => {
 
   // Evidence detail cards
   el('vendorDetails').innerHTML = vendors.length
-    ? vendors.map((v) => `
+    ? vendors.map((v) => {
+      const evidenceRows = Object.entries(v.evidence || {}).map(([criterionId, assessment]) => {
+        const label = WEIGHT_LABELS[criterionId] || criterionId;
+        const rationaleText = typeof assessment === 'string' ? assessment : assessment?.rationale || '';
+        const quotes = Array.isArray(assessment?.evidenceQuotes) ? assessment.evidenceQuotes : [];
+        return `<div class="evidence-criterion-row"><strong>${escapeHtml(label)}${assessment?.score !== undefined ? ` · ${escapeHtml(assessment.score)}/100` : ''}</strong><p>${escapeHtml(rationaleText || 'No rationale provided.')}</p>${quotes.map((quote) => `<blockquote>${escapeHtml(quote)}</blockquote>`).join('')}</div>`;
+      }).join('');
+      const external = v.externalData || {};
+      const externalSummary = external.provider === 'sam.gov'
+        ? (external.status === 'found'
+          ? `SAM.gov public registration: ${external.registrationStatus || 'status not reported'}${external.legalBusinessName ? ` · ${external.legalBusinessName}` : ''} · fetched ${external.fetchedAt || 'date unavailable'}`
+          : `SAM.gov lookup: ${external.status}`)
+        : '';
+      return `
       <div class="evidence-card">
         <h3>#${escapeHtml(v.rank)} · ${escapeHtml(v.vendorName)}</h3>
         <p>${escapeHtml(v.evidenceSummary || 'Evidence summary not available.')}</p>
@@ -684,11 +764,15 @@ const renderResults = (data) => {
           ${CRITERIA_KEYS.map(([key, label]) => `<div class="metric"><label>${label}</label><strong>${escapeHtml(v[key] ?? '—')}</strong></div>`).join('')}
           <div class="metric"><label>Weighted</label><strong>${escapeHtml(v.weightedScore ?? '—')}</strong></div>
         </div>
+        ${v.recommendation ? `<p><strong>Recommendation:</strong> ${escapeHtml(v.recommendation)}</p>` : ''}
+        ${evidenceRows ? `<div class="criteria-evidence"><h4>Criterion rationale and source quotations</h4>${evidenceRows}</div>` : ''}
+        ${externalSummary ? `<p><strong>External source (not used to change scores):</strong> ${escapeHtml(externalSummary)}</p>` : ''}
         <p><strong>Strengths:</strong> ${escapeHtml((v.strengths || []).join(', ') || 'Not specified')}</p>
         <p><strong>Weaknesses:</strong> ${escapeHtml((v.weaknesses || []).join(', ') || 'Not specified')}</p>
         <p><strong>Risk indicators:</strong> ${escapeHtml((v.riskIndicators || []).join(', ') || 'No notable risks')}</p>
         <p><strong>Missing information:</strong> ${escapeHtml((v.missingInformation || []).join(', ') || 'None identified')}</p>
-      </div>`).join('')
+      </div>`;
+    }).join('')
     : '<p class="empty-state">No vendor evidence returned.</p>';
 
   const badge = el('resultsBadge');
@@ -727,40 +811,48 @@ const downloadReport = () => {
   toast('Report downloaded.', 'success');
 };
 
-/* ================= Session history ================= */
+/* ================= Persistent evaluation history ================= */
 
-const recordSessionEvaluation = (data) => {
-  const verification = data.verification || {};
-  const entry = {
-    timestamp: new Date(),
-    tenderTitle: lastPayload?.tender?.title || 'Untitled tender',
-    winner: data.summary?.winner || '—',
-    state: verification.state || 'UNKNOWN',
-    averageScore: typeof data.summary?.averageScore === 'number' ? data.summary.averageScore : null,
-    vendorCount: Array.isArray(data.vendors) ? data.vendors.length : 0,
-    result: data,
-  };
-  sessionEvaluations.unshift(entry);
+const loadPersistedEvaluation = async (recordId) => {
+  const response = await fetch(`/api/evaluations/${encodeURIComponent(recordId)}`);
+  const record = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(record.error || `Could not load evaluation (HTTP ${response.status}).`);
+  return record;
+};
+
+const loadEvaluationRecords = async () => {
+  const response = await fetch('/api/evaluations?limit=500');
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `Could not load history (HTTP ${response.status}).`);
+  evaluationRecords.splice(0, evaluationRecords.length, ...(body.evaluations || []));
   renderSessionActivity();
   renderHistory();
 };
 
+const recordSessionEvaluation = async (data) => {
+  if (!data.evaluationId) throw new Error('The evaluation was not saved to the records database.');
+  const persisted = await loadPersistedEvaluation(data.evaluationId);
+  lastResult = persisted;
+  await loadEvaluationRecords();
+  return persisted;
+};
+
 const renderSessionActivity = () => {
-  el('ssCount').textContent = String(sessionEvaluations.length);
-  const latest = sessionEvaluations[0];
-  el('ssLastState').textContent = latest ? latest.state : '—';
+  el('ssCount').textContent = String(evaluationRecords.length);
+  const latest = evaluationRecords[0];
+  el('ssLastState').textContent = latest ? latest.integrityStatus.toUpperCase() : '—';
   el('ssLastWinner').textContent = latest ? latest.winner : '—';
 
   const container = el('sessionActivity');
-  if (!sessionEvaluations.length) {
-    container.innerHTML = '<div class="empty-state"><p>No evaluations yet this session.</p><button class="btn btn-sm btn-primary" id="ctaEvaluate2b">Start your first evaluation</button></div>';
+  if (!evaluationRecords.length) {
+    container.innerHTML = '<div class="empty-state"><p>No completed evaluations are stored yet.</p><button class="btn btn-sm btn-primary" id="ctaEvaluate2b">Start an evaluation</button></div>';
     el('ctaEvaluate2b').addEventListener('click', () => switchView('evaluate'));
     return;
   }
-  container.innerHTML = sessionEvaluations.slice(0, 5).map((entry) => `
+  container.innerHTML = evaluationRecords.slice(0, 5).map((entry) => `
     <div class="activity-item">
       <span class="activity-title">${escapeHtml(entry.tenderTitle)}</span>
-      <span class="activity-meta">${escapeHtml(entry.state)} · ${escapeHtml(entry.winner)} · ${entry.timestamp.toLocaleTimeString()}</span>
+      <span class="activity-meta">${escapeHtml(entry.createdAt)} · ${escapeHtml(entry.winner)} · record ${escapeHtml(entry.integrityStatus)}</span>
     </div>`).join('');
 };
 
@@ -771,36 +863,39 @@ const historyFilters = () => ({
 
 const renderHistory = () => {
   const { query, state } = historyFilters();
-  const filtered = sessionEvaluations.filter((entry) => {
-    if (state && entry.state !== state) return false;
-    if (query && !`${entry.tenderTitle} ${entry.winner} ${entry.state}`.toLowerCase().includes(query)) return false;
+  const filtered = evaluationRecords.filter((entry) => {
+    const entryState = entry.evaluationMode === 'manual' ? 'MANUAL_COMPLETED' : 'INFERENCE_COMPLETED';
+    if (state && entryState !== state) return false;
+    if (query && !`${entry.tenderTitle} ${entry.winner} ${entryState}`.toLowerCase().includes(query)) return false;
     return true;
   });
 
   const container = el('historyList');
-  if (!sessionEvaluations.length) {
-    container.innerHTML = '<div class="empty-state"><p>No evaluations recorded yet this session.</p></div>';
+  if (!evaluationRecords.length) {
+    container.innerHTML = '<div class="empty-state"><p>No completed evaluations are stored yet.</p></div>';
     return;
   }
   if (!filtered.length) {
     container.innerHTML = '<div class="empty-state"><p>No records match the current filters.</p></div>';
     return;
   }
-  container.innerHTML = filtered.map((entry, index) => `
+  container.innerHTML = filtered.map((entry) => `
     <div class="activity-item">
       <span class="activity-title">${escapeHtml(entry.tenderTitle)}</span>
-      <span class="activity-meta">${escapeHtml(entry.timestamp.toLocaleString())} · ${escapeHtml(entry.state)} · winner: ${escapeHtml(entry.winner)}${entry.averageScore !== null ? ` · avg ${entry.averageScore}` : ''} · ${entry.vendorCount} bidders</span>
-      <span style="margin-top:6px"><button class="btn btn-sm btn-ghost" data-load="${sessionEvaluations.indexOf(entry)}" type="button">View result</button></span>
+      <span class="activity-meta">${escapeHtml(entry.createdAt)} · ${escapeHtml(entry.evaluationMode)} · winner: ${escapeHtml(entry.winner)} · avg ${escapeHtml(entry.averageScore)} · SHA-256 ${escapeHtml(entry.integrityStatus)}</span>
+      <span style="margin-top:6px"><button class="btn btn-sm btn-ghost" data-record-id="${escapeHtml(entry.id)}" type="button">View saved result</button></span>
     </div>`).join('');
 
-  container.querySelectorAll('[data-load]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const entry = sessionEvaluations[Number(button.dataset.load)];
-      if (entry?.result) {
-        lastResult = entry.result;
-        renderResults(entry.result);
-        updateVerificationCard(entry.result.verification || {});
+  container.querySelectorAll('[data-record-id]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        const record = await loadPersistedEvaluation(button.dataset.recordId);
+        lastResult = record;
+        renderResults(record);
+        updateVerificationCard({ ...(record.verification || {}), recordIntegrity: record.integrity });
         switchView('results');
+      } catch (error) {
+        toast(error.message, 'error');
       }
     });
   });
@@ -813,25 +908,29 @@ const loadHealth = async () => {
   const pillText = el('serviceStatusText');
   try {
     const res = await fetch('/api/health');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const health = await res.json();
+    const ai = health.inferenceProvider || {};
+    const database = health.database || {};
 
-    el('ovApiStatus').textContent = health.status === 'ok' ? 'Operational' : 'Degraded';
-    el('ovApiHint').textContent = 'BIDVEIL service responding';
-    el('ovModel').textContent = health.inferenceProvider || 'none';
+    el('ovApiStatus').textContent = health.backend?.available && database.available ? 'Operational' : 'Degraded';
+    el('ovApiHint').textContent = database.available ? 'Backend and SQLite responding' : 'Evaluation database unavailable';
+    el('ovModel').textContent = ai.available ? ai.model : (ai.configured ? `OpenAI ${ai.status}` : 'API key not configured');
     ['hcApi', 'hcModel'].forEach((id) => el(id).classList.add('loaded'));
 
-    if (health.inferenceProvider && health.inferenceProvider !== 'none') {
+    if (ai.available) {
       pill.className = 'status-pill status-ok';
-      pillText.textContent = 'Provider configured';
+      pillText.textContent = 'OpenAI available';
+    } else if (ai.configured) {
+      pill.className = 'status-pill status-error';
+      pillText.textContent = 'OpenAI unavailable';
     } else {
       pill.className = 'status-pill status-degraded';
-      pillText.textContent = 'No provider configured';
+      pillText.textContent = 'OpenAI key not configured';
     }
 
-    el('ovVerificationNote').textContent = health.inferenceProvider && health.inferenceProvider !== 'none'
-      ? 'An inference provider is configured. Evaluations will include provider metadata.'
-      : 'No inference provider is configured. Evaluations will fail with INFERENCE_UNAVAILABLE.';
+    el('ovVerificationNote').textContent = database.available
+      ? (ai.available ? 'OpenAI is reachable; completed results are persisted and SHA-256 record integrity is available.' : 'Manual scoring and saved history are available. AI evaluations require a working OpenAI API key.')
+      : 'The evaluation database is unavailable; results cannot be saved.';
   } catch (error) {
     pill.className = 'status-pill status-error';
     pillText.textContent = 'Service unreachable';
@@ -876,18 +975,7 @@ const handleEvaluate = async () => {
 
   try {
     lastPayload = getFormState();
-    const cards = Array.from(document.querySelectorAll('.vendor-card'));
-    const formData = new FormData();
-    formData.append('payload', JSON.stringify(lastPayload));
-    let hasUploads = false;
-    cards.forEach((card, index) => {
-      (card._fileQueue || []).forEach((entry) => {
-        formData.append(`bid_${index}`, entry.file, entry.file.name);
-        hasUploads = true;
-      });
-    });
-    if (!hasUploads) appendLog('No documents — evaluating proposal text only');
-
+    const { formData, hasUploads } = buildEvaluationFormData(lastPayload);
     const res = await fetch('/api/evaluate/stream', { method: 'POST', body: formData });
 
     if (!res.ok) {
@@ -906,8 +994,9 @@ const handleEvaluate = async () => {
       throw new Error(data?.error || 'Evaluation request failed.');
     }
 
-    renderResults(data);
-    recordSessionEvaluation(data);
+    const persisted = await recordSessionEvaluation(data);
+    renderResults(persisted);
+    updateVerificationCard(persisted.verification || {});
     toast(`Evaluation complete — ${data.summary?.winner || 'winner'} recommended.`, 'success');
     switchView('results');
   } catch (error) {
@@ -1142,11 +1231,8 @@ const handleManualScoreSubmit = async () => {
     const payload = getManualScoresPayload();
     lastPayload = payload;
 
-    const res = await fetch('/api/evaluate/manual', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const { formData } = buildEvaluationFormData(payload);
+    const res = await fetch('/api/evaluate/manual', { method: 'POST', body: formData });
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -1154,8 +1240,9 @@ const handleManualScoreSubmit = async () => {
     }
 
     const data = await res.json();
-    renderResults(data);
-    recordSessionEvaluation(data);
+    const persisted = await recordSessionEvaluation(data);
+    renderResults(persisted);
+    updateVerificationCard(persisted.verification || {});
     toast('Manual evaluation complete — rankings calculated.', 'success');
     switchView('results');
   } catch (error) {
@@ -1170,10 +1257,29 @@ const handleManualScoreSubmit = async () => {
 
 window.addEventListener('DOMContentLoaded', () => {
   updateVerificationCard({ state: 'WAITING', status: 'Waiting for evaluation.' });
-  loadDemo();
+  renderVendorCards([{ name: '', price: '', proposal: '' }]);
   loadHealth();
-  renderSessionActivity();
-  renderHistory();
+  loadEvaluationRecords().catch((error) => toast(error.message, 'error'));
+
+  const tenderDropzone = el('tenderDropzone');
+  const tenderInput = el('tenderFiles');
+  tenderDropzone.addEventListener('click', () => tenderInput.click());
+  tenderDropzone.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); tenderInput.click(); }
+  });
+  tenderInput.addEventListener('change', () => {
+    addTenderFiles(tenderInput.files);
+    tenderInput.value = '';
+  });
+  ['dragenter', 'dragover'].forEach((type) => tenderDropzone.addEventListener(type, (event) => {
+    event.preventDefault();
+    tenderDropzone.classList.add('drag-active');
+  }));
+  ['dragleave', 'drop'].forEach((type) => tenderDropzone.addEventListener(type, (event) => {
+    event.preventDefault();
+    tenderDropzone.classList.remove('drag-active');
+  }));
+  tenderDropzone.addEventListener('drop', (event) => addTenderFiles(event.dataTransfer?.files));
 
   // Navigation
   document.querySelectorAll('.nav-item').forEach((item) => {
@@ -1194,11 +1300,39 @@ window.addEventListener('DOMContentLoaded', () => {
   if (el('ctaEvaluate')) el('ctaEvaluate').addEventListener('click', () => switchView('evaluate'));
   if (el('ctaEvaluate2')) el('ctaEvaluate2').addEventListener('click', () => switchView('evaluate'));
   if (el('ctaEvaluate3')) el('ctaEvaluate3').addEventListener('click', () => switchView('evaluate'));
-  if (el('ctaDemo')) el('ctaDemo').addEventListener('click', () => { loadDemo(); switchView('evaluate'); });
   if (el('ctaVerify')) el('ctaVerify').addEventListener('click', () => switchView('verification'));
 
+  if (el('verifyDocumentsButton')) el('verifyDocumentsButton').addEventListener('click', async () => {
+    const files = Array.from(el('verifyDocumentFiles').files || []);
+    const status = el('documentVerifyStatus');
+    if (!lastResult?.evaluationId) {
+      status.textContent = 'Open a saved evaluation from History before verifying its files.';
+      return;
+    }
+    if (!files.length) {
+      status.textContent = 'Select the original documents for this evaluation.';
+      return;
+    }
+    const formData = new FormData();
+    files.forEach((file) => formData.append('documents', file, file.name));
+    status.textContent = 'Comparing uploaded bytes with the saved SHA-256 hashes…';
+    try {
+      const response = await fetch(`/api/evaluations/${encodeURIComponent(lastResult.evaluationId)}/verify-documents`, {
+        method: 'POST',
+        body: formData,
+      });
+      const result = await response.json().catch(() => ({}));
+      status.textContent = result.verified
+        ? `Verified ${result.checkedCount} original document(s) against the saved SHA-256 hashes.`
+        : (result.error || `Document verification failed: ${result.status || `HTTP ${response.status}`}.`);
+      status.className = `verification-document-status ${result.verified ? 'verified' : 'failed'}`;
+    } catch (error) {
+      status.textContent = `Document verification could not be completed: ${error.message}`;
+      status.className = 'verification-document-status failed';
+    }
+  });
+
   // Evaluate form
-  if (el('loadDemo')) el('loadDemo').addEventListener('click', loadDemo);
   if (el('addVendor')) el('addVendor').addEventListener('click', () => {
     const container = el('vendorList');
     if (!container) return;
@@ -1222,10 +1356,8 @@ window.addEventListener('DOMContentLoaded', () => {
   // History
   if (el('historySearch')) el('historySearch').addEventListener('input', renderHistory);
   if (el('historyFilter')) el('historyFilter').addEventListener('change', renderHistory);
-  if (el('historyClear')) el('historyClear').addEventListener('click', () => {
-    sessionEvaluations.length = 0;
-    renderSessionActivity();
-    renderHistory();
-    toast('Session history cleared.', 'info');
+  if (el('historyRefresh')) el('historyRefresh').addEventListener('click', () => {
+    loadEvaluationRecords().then(() => toast('Saved records refreshed.', 'success'))
+      .catch((error) => toast(error.message, 'error'));
   });
 });

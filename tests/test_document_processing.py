@@ -52,45 +52,58 @@ def file_upload(data: bytes, filename: str, content_type: str) -> FileStorage:
     )
 
 
+def test_public_and_workspace_pages_render():
+    client = bidveil.app.test_client()
+
+    landing = client.get("/")
+    workspace = client.get("/workspace")
+
+    assert landing.status_code == 200
+    assert b"Open Workspace" in landing.data
+    assert workspace.status_code == 200
+    assert b"verifyDocumentFiles" in workspace.data
+
+
 def bid_payload(name: str = "Vendor A") -> dict:
     return {
-        "tender": {"title": "Test tender", "maximumBudget": 100000},
+        "tender": {"title": "Test tender", "description": "Secure implementation required", "maximumBudget": 100000},
         "bids": [
             {
                 "vendorName": name,
                 "quotedPrice": 85000,
-                "proposalText": "Brief text summary",
             }
         ],
     }
 
 
-def sample_ai_output_for_test(name: str = "Vendor A") -> dict:
+def sample_ai_output_for_test(name: str = "Vendor A", quote: str = "Brief text summary") -> dict:
     vendor = {
         "vendorName": name,
-        "quotedPrice": 85000,
-        "technicalCapabilities": "Secure implementation",
-        "deliveryTimeline": "Six months",
-        "relevantExperience": "Relevant projects",
-        "eligibilityCompliance": "Requirements met",
+        "evidenceSummary": "Based on submitted information.",
+        "criteriaAssessments": [
+            {"criterionId": criterion, "score": 80, "rationale": "The submitted proposal describes the relevant capability.", "evidenceQuotes": [quote]}
+            for criterion in ("technical_compliance", "relevant_experience", "delivery_timeline", "eligibility_and_documentation")
+        ],
         "strengths": ["Clear plan"],
         "weaknesses": [],
         "missingInformation": [],
         "riskIndicators": [],
-        "technicalComplianceScore": 80,
-        "priceCompetitivenessScore": 80,
-        "relevantExperienceScore": 80,
-        "deliveryTimelineScore": 80,
-        "eligibilityDocumentationScore": 80,
-        "evidenceSummary": "Based on submitted information.",
+        "recommendation": "Review submitted evidence.",
     }
     return {
-        "response": {"content": json.dumps({"vendors": [vendor]})},
+        "response": {"content": json.dumps({"overallRecommendation": "Review the evidence before award.", "vendors": [vendor]})},
         "verification": inference.empty_verification(
             state=inference.STATE_INFERENCE_COMPLETED,
             status="Test mock inference completed",
         ),
     }
+
+
+def sample_ai_response_for_prompt(prompt: str) -> dict:
+    source = json.loads(prompt)["sourceMaterial"]
+    bid = source["bids"][0]
+    quote = bid["documents"][0]["text"]
+    return sample_ai_output_for_test(bid["vendorName"], quote)
 
 
 def test_extracts_txt(tmp_path):
@@ -185,7 +198,7 @@ def test_successful_evaluation_uses_extracted_text_and_cleans_temp_files(
         prompts.append(prompt)
         if on_verifying:
             on_verifying()
-        return sample_ai_output_for_test()
+        return sample_ai_response_for_prompt(prompt)
 
     monkeypatch.setattr(bidveil, "call_inference", fake_inference)
     payload = bid_payload()
@@ -211,10 +224,10 @@ def test_successful_evaluation_uses_extracted_text_and_cleans_temp_files(
 
 
 def test_failed_inference_cleans_temp_files(tmp_path, monkeypatch):
-    async def failing_near_ai(_prompt, _nonce, _on_verifying=None):
+    async def failing_inference(_prompt, _nonce, _on_verifying=None):
         raise RuntimeError("upstream request failed")
 
-    monkeypatch.setattr(bidveil, "call_inference", failing_near_ai)
+    monkeypatch.setattr(bidveil, "call_inference", failing_inference)
     result, status = bidveil.process_evaluation(
         bid_payload(),
         {0: [file_upload(b"bid contents", "bid.txt", "text/plain")]},
@@ -243,7 +256,7 @@ def test_concurrent_evaluations_use_isolated_temporary_directories(tmp_path, mon
     async def fake_inference(_prompt, _nonce, on_verifying=None):
         if on_verifying:
             on_verifying()
-        return sample_ai_output_for_test()
+        return sample_ai_response_for_prompt(_prompt)
 
     monkeypatch.setattr(bidveil, "call_inference", fake_inference)
 
@@ -277,7 +290,7 @@ def test_multipart_evaluation_route_extracts_and_returns_status(monkeypatch):
     async def fake_inference(_prompt, _nonce, on_verifying=None):
         if on_verifying:
             on_verifying()
-        return sample_ai_output_for_test()
+        return sample_ai_response_for_prompt(_prompt)
 
     monkeypatch.setattr(bidveil, "call_inference", fake_inference)
     client = bidveil.app.test_client()
@@ -300,7 +313,7 @@ def test_stream_endpoint_reports_processing_stages_in_order(monkeypatch):
     async def fake_inference(_prompt, _nonce, on_verifying=None):
         if on_verifying:
             on_verifying()
-        return sample_ai_output_for_test()
+        return sample_ai_response_for_prompt(_prompt)
 
     monkeypatch.setattr(bidveil, "call_inference", fake_inference)
     response = bidveil.app.test_client().post(
@@ -333,39 +346,49 @@ def test_stream_endpoint_reports_processing_stages_in_order(monkeypatch):
     assert events[-1]["result"]["vendors"]
 
 
-def test_unconfigured_near_service_never_returns_fabricated_scores(monkeypatch):
-    monkeypatch.delenv("NEARAI_API_KEY", raising=False)
+def test_text_only_proposal_is_rejected_instead_of_fabricated_ai_scores():
     response = bidveil.app.test_client().post(
         "/api/evaluate",
         json=bid_payload(),
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 400
     body = response.get_json()
     assert "vendors" not in body
+    assert "uploaded proposal document" in body["error"]
     assert body["processing"][-1]["state"] == "cleanup_completed"
 
 
-def test_health_endpoint_reports_service_configuration():
+def test_health_endpoint_reports_service_configuration(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     response = bidveil.app.test_client().get("/api/health")
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body["status"] == "ok"
-    assert body["inferenceProvider"] == "none"
+    assert body["status"] == "degraded"
+    assert body["database"]["available"] is True
+    assert body["inferenceProvider"]["provider"] == "openai"
 
 
-def test_health_endpoint_reports_configured_key(monkeypatch):
+def test_health_endpoint_reports_real_provider_status(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "unit-test-key")
+    monkeypatch.setattr(inference, "check_provider_health", lambda: {
+        "provider": "openai", "configured": True, "available": False,
+        "model": "unit-test-model", "status": "authentication_error",
+    })
     response = bidveil.app.test_client().get("/api/health")
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body["status"] == "ok"
-    assert body["inferenceProvider"] == "none"
+    assert body["status"] == "degraded"
+    assert body["inferenceProvider"]["configured"] is True
+    assert body["inferenceProvider"]["available"] is False
+    assert "unit-test-key" not in response.get_data(as_text=True)
 
 
-def test_inference_unavailable_when_no_provider_configured(tmp_path):
+def test_inference_unavailable_when_no_provider_configured(tmp_path, monkeypatch):
     """Test that evaluation fails with INFERENCE_UNAVAILABLE when no provider is configured."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     payload = bid_payload()
     uploads = {
         0: [file_upload(b"bid contents", "bid.txt", "text/plain")]
@@ -379,6 +402,6 @@ def test_inference_unavailable_when_no_provider_configured(tmp_path):
 
     assert status == 503
     assert "error" in result
-    assert "inference" in result["error"].lower()
+    assert "openai_api_key" in result["error"].lower()
     assert result["verification"]["state"] == inference.STATE_INFERENCE_UNAVAILABLE
     assert result["verification"]["mode"] == "none"

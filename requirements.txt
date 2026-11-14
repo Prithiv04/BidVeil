@@ -2,3 +2,4 @@ Flask==3.1.0
 python-dotenv==1.0.1
 gunicorn==23.0.0
 pypdf==6.15.0
+openai>=1.66.0,<3

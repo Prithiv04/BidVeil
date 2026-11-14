@@ -499,6 +499,8 @@ select.input-sm { cursor: pointer; }
 .verify-stat.warn strong { color: var(--warning); }
 .verify-stat.bad strong { color: var(--danger); }
 .verify-stat.muted strong { color: var(--text-faint); }
+.verification-document-status.verified { color: var(--success); }
+.verification-document-status.failed { color: var(--danger); }
 
 .timeline { list-style: none; margin: 0; padding: 0; }
 .timeline li {

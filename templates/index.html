@@ -89,10 +89,9 @@
               <div class="hero-text">
                 <div class="eyebrow">Confidential procurement intelligence</div>
                 <h2>Evaluate tenders with verifiable AI</h2>
-                <p>BIDVEIL extracts evidence from bid documents, scores vendors against your criteria, and provides evaluation integrity information. Nothing is persisted.</p>
+                <p>BIDVEIL extracts evidence from tender and bid documents, ranks submissions against configured criteria, and stores completed results with SHA-256 integrity checks.</p>
                 <div class="hero-actions">
                   <button class="btn btn-primary" id="ctaEvaluate">New evaluation</button>
-                  <button class="btn btn-ghost" id="ctaDemo">Load demo tender</button>
                   <button class="btn btn-ghost" id="ctaVerify">Verification centre</button>
                 </div>
               </div>
@@ -117,17 +116,17 @@
             <div class="grid-2">
               <div class="card">
                 <div class="card-head">
-                  <h3>Session activity</h3>
-                  <span class="card-note">This browser session only</span>
+                  <h3>Recent evaluations</h3>
+                  <span class="card-note">Persistent SQLite records</span>
                 </div>
                 <div class="mini-stats">
                   <div class="mini-stat"><label>Evaluations run</label><strong id="ssCount">0</strong></div>
-                  <div class="mini-stat"><label>Last verification</label><strong id="ssLastState" class="mono">—</strong></div>
+                  <div class="mini-stat"><label>Latest record integrity</label><strong id="ssLastState" class="mono">—</strong></div>
                   <div class="mini-stat"><label>Last winner</label><strong id="ssLastWinner">—</strong></div>
                 </div>
                 <div id="sessionActivity" class="activity-list">
                   <div class="empty-state">
-                    <p>No evaluations yet this session.</p>
+                    <p>No completed evaluations are stored yet.</p>
                     <button class="btn btn-sm btn-primary" id="ctaEvaluate2">Start your first evaluation</button>
                   </div>
                 </div>
@@ -138,9 +137,9 @@
                 <ol class="flow-steps">
                   <li><span class="flow-num">1</span><div><strong>Submit tender &amp; bids</strong><p>Tender criteria plus vendor proposals and PDF/TXT documents.</p></div></li>
                   <li><span class="flow-num">2</span><div><strong>Ephemeral extraction</strong><p>Text is extracted in a request-scoped temp directory, then deleted.</p></div></li>
-                  <li><span class="flow-num">3</span><div><strong>AI inference</strong><p>When configured, an inference provider analyzes bid text and extracts evidence.</p></div></li>
-                  <li><span class="flow-num">4</span><div><strong>Deterministic scoring</strong><p>Evidence is scored by fixed weights — the AI never picks a winner.</p></div></li>
-                  <li><span class="flow-num">5</span><div><strong>Results report</strong><p>Rankings, scores, and provider metadata are returned.</p></div></li>
+                  <li><span class="flow-num">3</span><div><strong>OpenAI analysis</strong><p>With a configured API key, OpenAI assesses submitted text and returns evidence, rationales, and risks.</p></div></li>
+                  <li><span class="flow-num">4</span><div><strong>Weighted scoring</strong><p>AI criterion scores and application-calculated price scores are combined using configured weights.</p></div></li>
+                  <li><span class="flow-num">5</span><div><strong>Saved result</strong><p>The completed evaluation, source document hashes, and record hash are stored in SQLite.</p></div></li>
                 </ol>
               </div>
             </div>
@@ -148,9 +147,7 @@
             <div class="card">
               <div class="card-head"><h3>Evaluation integrity</h3></div>
               <p class="prose">
-                BIDVEIL validates document structure, extracts text ephemerally, and runs deterministic weighted scoring.
-                When an inference provider is configured, evaluation results include provider metadata.
-                Without a provider, evaluations fail with a clear <span class="mono">INFERENCE_UNAVAILABLE</span> status.
+                BIDVEIL extracts text from submitted documents, requests evidence-based scores from OpenAI, calculates weighted rankings, and persists completed results. Database record hashes can be recomputed through the integrity endpoint. AI evaluation requires a working <span class="mono">OPENAI_API_KEY</span>; manual scoring remains available without it.
               </p>
               <p class="prose muted" id="ovVerificationNote"></p>
             </div>
@@ -163,7 +160,6 @@
                 <div class="card">
                   <div class="card-head">
                     <h3>Tender configuration</h3>
-                    <button id="loadDemo" class="btn btn-sm btn-ghost" type="button">Load demo data</button>
                   </div>
 
                   <div class="field-grid">
@@ -203,6 +199,15 @@
                       <textarea id="evaluationCriteria" rows="2" placeholder="Criteria used for scoring…"></textarea>
                     </div>
                   </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-head"><h3>Tender documents</h3><span class="card-note">Tender requirements used to assess every bid</span></div>
+                  <div class="dropzone" id="tenderDropzone" tabindex="0" role="button" aria-label="Upload tender documents">
+                    <strong>Drop tender documents here</strong> or click to browse — PDF / TXT, 10 MB max
+                    <input id="tenderFiles" type="file" multiple accept=".pdf,.txt" hidden />
+                  </div>
+                  <div id="tenderFileQueue" class="file-queue"></div>
                 </div>
 
                 <div class="card">
@@ -369,8 +374,8 @@
                 <ol class="timeline" id="verifyTimeline">
                   <li data-step="validation"><span class="tl-dot"></span><div><strong>Document validation</strong><p>File type, size, structure, and extractable text are validated.</p></div></li>
                   <li data-step="extraction"><span class="tl-dot"></span><div><strong>Text extraction</strong><p>PDF/TXT content is extracted into a request-scoped temporary directory.</p></div></li>
-                  <li data-step="inference"><span class="tl-dot"></span><div><strong>AI inference</strong><p>When configured, the provider analyzes bid text and extracts evidence.</p></div></li>
-                  <li data-step="scoring"><span class="tl-dot"></span><div><strong>Deterministic scoring</strong><p>Fixed weights calculate scores; the AI never selects a winner.</p></div></li>
+                  <li data-step="inference"><span class="tl-dot"></span><div><strong>AI inference</strong><p>OpenAI analyzes submitted tender and proposal text and returns criterion evidence.</p></div></li>
+                  <li data-step="scoring"><span class="tl-dot"></span><div><strong>Weighted ranking</strong><p>Application weights calculate totals from criterion scores and normalized price.</p></div></li>
                   <li data-step="cleanup"><span class="tl-dot"></span><div><strong>Temporary cleanup</strong><p>The temp directory is removed on success and every failure path.</p></div></li>
                 </ol>
               </div>
@@ -381,7 +386,13 @@
                 <div id="verificationUnavailable" class="notice notice-warning" hidden>
                   <strong>Inference unavailable.</strong>
                   <span id="verificationUnavailableText"></span>
-                  No inference provider is configured. Configure a provider to enable evaluation.
+                  OpenAI is unavailable. Check OPENAI_API_KEY and provider access to enable AI evaluation.
+                </div>
+                <div class="field-group" style="margin-top:16px">
+                  <label for="verifyDocumentFiles">Verify original document files</label>
+                  <input id="verifyDocumentFiles" type="file" multiple accept=".pdf,.txt" />
+                  <button id="verifyDocumentsButton" class="btn btn-sm btn-ghost" type="button">Compare document hashes</button>
+                  <p id="documentVerifyStatus" class="verification-document-status" aria-live="polite">Open a saved evaluation, then select its original files.</p>
                 </div>
               </div>
             </div>
@@ -402,16 +413,14 @@
                   <select id="historyFilter" class="input-sm">
                     <option value="">All states</option>
                     <option value="INFERENCE_COMPLETED">INFERENCE_COMPLETED</option>
+                    <option value="MANUAL_COMPLETED">MANUAL_COMPLETED</option>
                     <option value="INFERENCE_FAILED">INFERENCE_FAILED</option>
                     <option value="INFERENCE_UNAVAILABLE">INFERENCE_UNAVAILABLE</option>
                   </select>
-                  <button id="historyClear" class="btn btn-sm btn-ghost" type="button">Clear session</button>
+                  <button id="historyRefresh" class="btn btn-sm btn-ghost" type="button">Refresh records</button>
                 </div>
               </div>
-              <p class="prose muted">
-                BIDVEIL does not persist evaluations, bids, prompts, or model responses.
-                Records below exist only in this browser session and are cleared on refresh or when you clear them.
-              </p>
+              <p class="prose muted">Completed evaluation results and integrity hashes are stored in SQLite. Original uploaded files and extracted document text are not stored.</p>
               <div id="historyList" class="activity-list">
                 <div class="empty-state"><p>No evaluations recorded yet this session.</p></div>
               </div>
@@ -423,15 +432,15 @@
             <div class="card">
               <div class="card-head"><h3>Data lifecycle</h3><span class="card-note">What happens to a document</span></div>
               <div class="lifecycle">
-                <div class="lc-step"><span class="lc-num">1</span><h4>Upload</h4><p>Bid documents are sent over HTTPS to BIDVEIL for this evaluation only.</p></div>
+                <div class="lc-step"><span class="lc-num">1</span><h4>Upload</h4><p>Tender and bid documents are sent over HTTPS to BIDVEIL for this evaluation.</p></div>
                 <div class="lc-arrow">→</div>
                 <div class="lc-step"><span class="lc-num">2</span><h4>Temporary processing</h4><p>Files land in a unique request-scoped temp directory (<span class="mono">bidveil-*</span>); text is extracted in memory.</p></div>
                 <div class="lc-arrow">→</div>
-                <div class="lc-step"><span class="lc-num">3</span><h4>AI inference</h4><p>When configured, extracted text is sent to an inference provider for analysis. Provider retention policies are outside BIDVEIL's control.</p></div>
+                <div class="lc-step"><span class="lc-num">3</span><h4>AI inference</h4><p>For AI evaluations, extracted text is sent to OpenAI. OpenAI's data handling and retention policies are outside BIDVEIL's control.</p></div>
                 <div class="lc-arrow">→</div>
                 <div class="lc-step"><span class="lc-num">4</span><h4>Scoring</h4><p>Deterministic weighted scoring is applied to extracted evidence.</p></div>
                 <div class="lc-arrow">→</div>
-                <div class="lc-step"><span class="lc-num">5</span><h4>Cleanup</h4><p>The temp directory is removed on success <em>and</em> every failure path; upload streams are closed.</p></div>
+                <div class="lc-step"><span class="lc-num">5</span><h4>Record and cleanup</h4><p>Results and SHA-256 hashes are stored in SQLite. Original uploads and extracted document text are removed after processing.</p></div>
               </div>
             </div>
 
@@ -441,18 +450,18 @@
                 <ul class="check-list">
                   <li>Validates file type, size and structure before processing.</li>
                   <li>Extracts text ephemerally — originals are never stored.</li>
-                  <li>Sends bid text to an inference provider only for the active evaluation, when configured.</li>
-                  <li>Generates a fresh 32-byte nonce per evaluation (replay protection).</li>
+                  <li>Sends tender and bid text to the OpenAI API for an active AI evaluation when OPENAI_API_KEY is configured.</li>
+                  <li>Stores completed results, SHA-256 document hashes, and a SHA-256 evaluation record hash in SQLite.</li>
                   <li>Deletes temporary files after the request, including failures.</li>
-                  <li>Does not intentionally persist uploads, prompts, or responses; does not log tender content.</li>
+                  <li>Does not store uploaded originals or extracted document text; completed results are retained in the configured database.</li>
                 </ul>
               </div>
               <div class="card">
                 <div class="card-head"><h3>Limitations — read before use</h3></div>
                 <ul class="check-list warn-list">
                   <li>BIDVEIL cannot guarantee physical memory erasure.</li>
-                  <li>Any inference provider's retention and logging policies are outside BIDVEIL's control.</li>
-                  <li>Verification proves inference integrity, not data privacy at the provider.</li>
+                  <li>OpenAI's data handling and retention policies are outside BIDVEIL's control.</li>
+                  <li>SHA-256 verifies record integrity after saving; it does not establish that AI analysis or vendor claims are correct.</li>
                   <li>Do not submit information unless the provider's terms are acceptable to your organisation.</li>
                   <li>Cleanup is confirmed per-request in the processing log; check it after each run.</li>
                 </ul>
@@ -469,11 +478,11 @@
                 <div class="arch-arrow">→</div>
                 <div class="arch-node"><span class="arch-num">2</span><strong>Secure processing</strong><p>Flask validates, extracts text into a request-scoped temp dir.</p><code>app.py · pypdf</code></div>
                 <div class="arch-arrow">→</div>
-                <div class="arch-node"><span class="arch-num">3</span><strong>Inference provider</strong><p>When configured, an AI provider analyzes bid text and extracts evidence.</p><code>inference.py</code></div>
+                <div class="arch-node"><span class="arch-num">3</span><strong>OpenAI inference</strong><p>When configured, OpenAI analyzes extracted text and returns schema-validated evidence.</p><code>inference.py</code></div>
                 <div class="arch-arrow">→</div>
                 <div class="arch-node"><span class="arch-num">4</span><strong>Scoring & results</strong><p>Deterministic weighted scoring applied to extracted evidence.</p><code>app.py</code></div>
                 <div class="arch-arrow">→</div>
-                <div class="arch-node"><span class="arch-num">5</span><strong>Evaluation result</strong><p>Deterministic weighted scoring; SSE stream delivers progress + result.</p><code>Flask SSE</code></div>
+                <div class="arch-node"><span class="arch-num">5</span><strong>Persistent record</strong><p>SQLite stores completed results with document and evaluation SHA-256 hashes.</p><code>storage.py</code></div>
               </div>
             </div>
 
@@ -482,7 +491,7 @@
                 <div class="card-head"><h3>Technology stack</h3></div>
                 <div class="chip-cloud">
                   <span class="chip">Flask</span><span class="chip">Python 3</span><span class="chip">pypdf</span>
-                  <span class="chip">Vanilla JS</span><span class="chip">Server-Sent Events</span>
+                  <span class="chip">Vanilla JS</span><span class="chip">Server-Sent Events</span><span class="chip">SQLite</span><span class="chip">OpenAI Responses API</span>
                 </div>
               </div>
               <div class="card">

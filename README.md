@@ -1,157 +1,57 @@
 # BIDVEIL
 
-BIDVEIL is a tender evaluation dashboard with provider-agnostic inference and manual scoring modes. It ranks submissions using a deterministic weighted scoring engine. Results are decision support, not an automatic or legally binding procurement decision.
+BIDVEIL is a tender evaluation application with OpenAI-assisted evidence review, manual scoring, persistent SQLite evaluation records, and SHA-256 integrity checks. Scores and recommendations support human review; they do not make procurement awards.
 
-## Features
+## What is implemented
 
-- Tender setup and multiple vendor bid submissions
-- PDF and UTF-8 TXT upload with server-side extraction
-- **Manual scoring mode**: Enter bidder scores directly without AI (works without any provider)
-- **AI-assisted evaluation**: Configure any AI provider in `inference.py` for automated analysis
-- Weighted scoring, ranking, criterion breakdown, and evaluation evidence
-- Configurable evaluation criteria with customizable weights
-- Price normalization with explicit over-budget handling
-- Request-specific processing status, extraction result, and cleanup confirmation
-- No database or application-level history for bids or evaluation content
+- OpenAI Responses API evaluation using `OPENAI_API_KEY` and optional `OPENAI_MODEL` (defaults to `gpt-6-astra`). No mock fallback is used.
+- PDF and UTF-8 TXT extraction. Tender configuration and extracted tender / vendor document text are passed as source material. AI evidence quotations must match that vendor's extracted proposal document content before results are accepted.
+- AI evaluation requires at least one successfully extracted original proposal document for every vendor. The application does not create, infer, or substitute proposal text from sample data or a manually entered summary.
+- Deterministic price normalization and weighted totals; AI supplies rationale and scores for the non-price criteria.
+- Manual scoring that does not require an AI credential.
+- SQLite persistence in `instance/bidveil.sqlite3` by default, override with `BIDVEIL_DB_PATH`. History and detail views come from the database.
+- SHA-256 hashes for uploaded documents and canonical evaluation records. `/api/evaluations/<id>/verify` recomputes and checks the stored record hash; `/api/evaluations/<id>/verify-documents` compares re-uploaded files with their recorded hashes. This detects mismatches, but does not prove that a source document is authentic or that its claims are true. Since the record digest is stored with the record, an administrator who can rewrite both database fields can also recompute it; use protected backups or a separately controlled audit store when resisting privileged tampering is required.
+- `/api/evaluations/<id>/verify-documents` accepts the original files as multipart uploads and compares their byte hashes with the document hashes protected by the record hash.
+- Health reporting checks SQLite and, when configured, contacts OpenAI to test API reachability. The SAM.gov source is optional and is reported as configured separately.
+- Optional U.S. SAM.gov public entity lookup when the submitter provides a UEI and `SAM_GOV_API_KEY`. It only uses the public Entity Management API and does not affect evaluation scores. No external vendor data is invented or supplied as a fallback.
 
-## Document processing
+The optional source is the [official SAM.gov Entity Management API](https://open.gsa.gov/api/entity-api/); use requires a SAM.gov public API key and a vendor UEI.
 
-The browser sends PDF/TXT files as multipart uploads. BIDVEIL validates extensions, MIME types, file size, PDF structure/encryption, UTF-8 encoding, and the presence of extractable text. Unsupported or unreadable files fail the evaluation with a per-file status; BIDVEIL does not silently omit them or claim successful extraction.
+Uploaded document contents and proposal text are removed from the persisted record after evaluation. Extracted evidence quotations, rationales, scores, evaluation metadata, and document hashes are retained. Evaluation prompts are sent to OpenAI when AI mode is used; review the provider's current data terms before uploading sensitive procurement material.
 
-For each evaluation, the server writes uploads using generated names inside a unique `TemporaryDirectory`, extracts text using `pypdf` or UTF-8 decoding, closes the framework upload streams before inference, and uses the extracted text to construct the inference request. The temporary directory is closed on success and on extraction, inference, or evaluation failures. Multiple requests receive independent temporary directories. Werkzeug may also use its request-managed temporary spool for multipart parsing; BIDVEIL closes those file streams after extraction (or on failure), and Werkzeug closes them when the request context ends.
-
-Limits: 10 MB per document, 2 million extracted characters per document, 10 million extracted characters per request, 1,000 PDF pages per document, 10 documents per vendor, 20 vendors, and 50 MB per HTTP request. Only PDF and UTF-8 TXT are supported; scanned/image-only PDFs without an OCR text layer are rejected as text-empty.
-
-## Architecture
-
-```text
-Browser (Flask template + vanilla JS)
-   |  multipart POST /api/evaluate/stream  (SSE progress events)
-   v
-app.py  process_evaluation()
-   |-- validate uploads (extension, MIME, size, PDF structure, UTF-8)
-   |-- write to unique request-scoped TemporaryDirectory (bidveil-*)
-   |-- extract text (pypdf / UTF-8 decode) -> in-memory only
-   |-- generate fresh 32-byte nonce (hex)
-   |-- build evaluation prompt (tender + extracted bid text + nonce)
-   v
-inference.py  run_inference()   [provider-agnostic]
-   |-- When configured: calls AI provider for analysis
-   |-- When not configured: raises INFERENCE_UNAVAILABLE
-   v
-Verification object -> app.py -> deterministic weighted scoring -> SSE result
-   |
-   +-- TemporaryDirectory removed on success AND every failure path
-   +-- upload streams closed; extracted text never persisted
-```
-
-Evaluation states: `WAITING`, `INFERENCE_PENDING`, `INFERENCE_COMPLETED`, `INFERENCE_FAILED`, `INFERENCE_UNAVAILABLE`. Without a configured provider, evaluations fail with `INFERENCE_UNAVAILABLE`.
-
-## Judge demo workflow (fictional vendors)
-
-### Manual Scoring Mode (no AI required)
-
-1. `python app.py` then open `http://127.0.0.1:8000/`.
-2. Configure your tender in the **Evaluate** tab:
-   - Enter tender title, description, budget, and requirements
-   - Add bidders with their quoted prices and proposal summaries
-   - Select **Manual scoring** as the evaluation mode
-3. Navigate to the **Manual Scoring** tab:
-   - Enter scores (0-100) for each bidder on the required criteria:
-     - Technical Compliance
-     - Relevant Experience
-     - Delivery Timeline
-     - Eligibility & Documentation
-   - Price scores are auto-calculated based on budget
-   - Add evidence, strengths, and weaknesses for each bidder
-4. Click **Submit & Rank** to calculate weighted scores and rankings
-5. View results in the **Results** tab with score breakdowns and rankings
-
-### AI-Assisted Evaluation (requires provider configuration)
-
-1. Configure an AI provider in `inference.py` (e.g., OpenAI, Anthropic, local models)
-2. `python app.py` then open `http://127.0.0.1:8000/`.
-3. Click **Load demo** — three fictional vendors (Northstar Systems: lower price/moderate compliance; Meridian Consulting: higher price/excellent compliance; Helio DataWorks: competitive price/incomplete documentation).
-4. Optionally attach the sample TXT files referenced in the demo proposals.
-5. Select **AI-Assisted** as the evaluation mode.
-6. Click **Evaluate bids** — watch Processing status stream extraction -> preparation -> inference -> completion -> cleanup.
-7. Inspect the **Evaluation Integrity** section: it shows document validation, extraction status, scoring completion, and cleanup status.
-8. Rankings and per-vendor evidence come from the deterministic weighted scoring engine; the AI only extracts structured evidence, never final scores.
-
-## Privacy boundaries
-
-- BIDVEIL does not intentionally persist uploaded documents, extracted bid text, prompts, or model responses in a database, application files, or logs.
-- Temporary upload files are removed when the request-scoped temporary directory closes. This is file cleanup, not a guarantee of physical storage overwrite.
-- Multipart parser spool files, if used by Werkzeug, are request-managed temporary files and are closed after document extraction or request completion.
-- Python process memory may retain copies until normal runtime memory reuse/release; secure memory erasure is not claimed.
-- Bid text is sent to an inference provider when configured. BIDVEIL cannot control or promise the provider's retention, operational logging, or other processing practices; check the provider's current terms and configuration before using real procurement data.
-- The evaluation response is returned to the browser and may exist in browser/runtime memory. BIDVEIL does not implement a history feature.
-
-## Provider configuration
-
-The `inference.py` module provides a provider-agnostic interface. By default, no provider is configured and evaluations fail with `INFERENCE_UNAVAILABLE`. To enable evaluation, implement `run_inference()` in `inference.py` with your chosen AI provider (OpenAI, Anthropic, local models, etc.).
-
-## Run locally (Windows PowerShell)
-
-1. Install dependencies:
+## Setup (Windows PowerShell)
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
-
-2. Configure environment variables (optional for development):
-
-```powershell
-# Copy the example environment file
 Copy-Item .env.example .env
-
-# Edit .env to set FLASK_SECRET_KEY for production use
-# For development, a random key is generated automatically
 ```
 
-3. Start BIDVEIL:
+Set `OPENAI_API_KEY` in the process environment or private `.env` file to enable AI evaluation. Do not commit `.env`. `OPENAI_MODEL` can select a model available to your account. Manual scoring is available without OpenAI credentials. For optional U.S. entity lookup, set `SAM_GOV_API_KEY`; users must supply a vendor UEI.
+
+Start the app:
 
 ```powershell
 python app.py
 ```
 
-4. Open `http://127.0.0.1:8000/`. Check `http://127.0.0.1:8000/api/health` for service readiness. Without a configured provider, health reports `none` and evaluation returns `INFERENCE_UNAVAILABLE`.
+Open `http://127.0.0.1:8000/`; the evaluation workspace is at `/workspace`. Check `/api/health` for current service status. The API key is never returned by health responses.
 
-## Production Deployment
+## Document limits
 
-### Security Configuration
+Only PDF and UTF-8 TXT are accepted. Files are limited to 10 MB each, 10 files per vendor or tender, 20 vendors, 1,000 PDF pages, 2 million extracted characters per file, and 10 million per request. Scanned PDFs without an extractable text layer are rejected.
 
-For production deployment, configure the following environment variables:
+## API routes
 
-- `FLASK_SECRET_KEY`: Required. Generate a secure random key:
-  ```bash
-  python -c "import secrets; print(secrets.token_hex(32))"
-  ```
-- `BIDVEIL_TEMP_DIR`: Optional. Custom directory for temporary document processing.
-
-### Production Server
-
-BIDVEIL includes Gunicorn for production deployment. Run with:
-
-```bash
-gunicorn -w 4 -b 0.0.0.0:8000 app:app
-```
-
-Additional recommendations:
-- Use a reverse proxy (nginx, Apache) for SSL/TLS termination
-- Configure firewall rules to restrict access
-- Enable rate limiting on the reverse proxy
-- Use environment-specific configuration files
-- Monitor logs for suspicious activity
-
-### Security Considerations
-
-- **No Authentication**: BIDVEIL does not include built-in authentication. Deploy behind an authentication layer (OAuth, SSO, or reverse proxy auth) for production use.
-- **No CSRF Protection**: BIDVEIL does not use session-based features that require CSRF tokens. If adding authentication, implement CSRF protection.
-- **File Upload Limits**: Maximum 50 MB per request, 10 MB per document, 10 documents per vendor, 20 vendors.
-- **Temporary Files**: Documents are stored in request-scoped temporary directories and cleaned up after processing.
-- **No Persistence**: No database or file storage of evaluation data. All data is ephemeral.
-- **Inference Provider**: If using AI-assisted evaluation, configure provider credentials securely and review the provider's data retention policies.
+- `GET /api/health`
+- `POST /api/evaluate` (JSON or multipart form with a `payload` JSON field and `tender_N` / `bid_N` files)
+- `POST /api/evaluate/stream` (multipart/server-sent progress)
+- `POST /api/evaluate/manual`
+- `GET /api/evaluations`
+- `GET /api/evaluations/<id>`
+- `GET /api/evaluations/<id>/verify`
+- `POST /api/evaluations/<id>/verify-documents` (multipart repeated `documents` fields, or grouped `tender_N` / `bid_N` fields; use original filenames)
 
 ## Tests
 
@@ -159,3 +59,9 @@ Additional recommendations:
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+
+Tests use controlled fake provider responses only in test code; the application never treats such responses as production evaluations.
+
+## Deployment considerations
+
+The application does not include user authentication or multi-tenant access controls. Put it behind an appropriate identity and access-control layer before using it for real procurement. Use HTTPS, secure secret storage, database backups, and restricted access to the SQLite file. The default SQLite database is suitable for a single application instance; select an appropriately managed database before scaling to multiple workers or hosts.
