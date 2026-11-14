@@ -117,7 +117,7 @@
               <div class="card">
                 <div class="card-head">
                   <h3>Recent evaluations</h3>
-                  <span class="card-note">Persistent SQLite records</span>
+                  <span class="card-note">Persistent database records</span>
                 </div>
                 <div class="mini-stats">
                   <div class="mini-stat"><label>Evaluations run</label><strong id="ssCount">0</strong></div>
@@ -139,7 +139,7 @@
                   <li><span class="flow-num">2</span><div><strong>Ephemeral extraction</strong><p>Text is extracted in a request-scoped temp directory, then deleted.</p></div></li>
                   <li><span class="flow-num">3</span><div><strong>OpenAI analysis</strong><p>With a configured API key, OpenAI assesses submitted text and returns evidence, rationales, and risks.</p></div></li>
                   <li><span class="flow-num">4</span><div><strong>Weighted scoring</strong><p>AI criterion scores and application-calculated price scores are combined using configured weights.</p></div></li>
-                  <li><span class="flow-num">5</span><div><strong>Saved result</strong><p>The completed evaluation, source document hashes, and record hash are stored in SQLite.</p></div></li>
+                  <li><span class="flow-num">5</span><div><strong>Saved result</strong><p>The completed evaluation and integrity hashes are stored in the configured database; hosted originals are retained in private Supabase Storage.</p></div></li>
                 </ol>
               </div>
             </div>
@@ -420,7 +420,7 @@
                   <button id="historyRefresh" class="btn btn-sm btn-ghost" type="button">Refresh records</button>
                 </div>
               </div>
-              <p class="prose muted">Completed evaluation results and integrity hashes are stored in SQLite. Original uploaded files and extracted document text are not stored.</p>
+              <p class="prose muted">Evaluation results and integrity hashes are stored in the configured database. Original uploaded files are retained in private Supabase Storage when configured; extracted document text is not stored.</p>
               <div id="historyList" class="activity-list">
                 <div class="empty-state"><p>No evaluations recorded yet this session.</p></div>
               </div>
@@ -440,7 +440,7 @@
                 <div class="lc-arrow">→</div>
                 <div class="lc-step"><span class="lc-num">4</span><h4>Scoring</h4><p>Deterministic weighted scoring is applied to extracted evidence.</p></div>
                 <div class="lc-arrow">→</div>
-                <div class="lc-step"><span class="lc-num">5</span><h4>Record and cleanup</h4><p>Results and SHA-256 hashes are stored in SQLite. Original uploads and extracted document text are removed after processing.</p></div>
+                <div class="lc-step"><span class="lc-num">5</span><h4>Record and cleanup</h4><p>Results and SHA-256 hashes are stored in the configured database. Hosted originals are retained in private Supabase Storage; temporary files and extracted text are removed after processing.</p></div>
               </div>
             </div>
 
@@ -449,11 +449,11 @@
                 <div class="card-head"><h3>What BIDVEIL does</h3></div>
                 <ul class="check-list">
                   <li>Validates file type, size and structure before processing.</li>
-                  <li>Extracts text ephemerally — originals are never stored.</li>
+                  <li>Uses temporary local processing; hosted original uploads are retained in a private Supabase Storage bucket.</li>
                   <li>Sends tender and bid text to the OpenAI API for an active AI evaluation when OPENAI_API_KEY is configured.</li>
-                  <li>Stores completed results, SHA-256 document hashes, and a SHA-256 evaluation record hash in SQLite.</li>
+                  <li>Stores completed results, SHA-256 document hashes, and a SHA-256 evaluation record hash in the configured database.</li>
                   <li>Deletes temporary files after the request, including failures.</li>
-                  <li>Does not store uploaded originals or extracted document text; completed results are retained in the configured database.</li>
+                  <li>Stores uploaded originals in private Supabase Storage and evaluation results in the configured database; extracted document text is not retained.</li>
                 </ul>
               </div>
               <div class="card">
@@ -482,7 +482,7 @@
                 <div class="arch-arrow">→</div>
                 <div class="arch-node"><span class="arch-num">4</span><strong>Scoring & results</strong><p>Deterministic weighted scoring applied to extracted evidence.</p><code>app.py</code></div>
                 <div class="arch-arrow">→</div>
-                <div class="arch-node"><span class="arch-num">5</span><strong>Persistent record</strong><p>SQLite stores completed results with document and evaluation SHA-256 hashes.</p><code>storage.py</code></div>
+                <div class="arch-node"><span class="arch-num">5</span><strong>Persistent record</strong><p>The configured database stores completed results with document and evaluation SHA-256 hashes.</p><code>storage.py</code></div>
               </div>
             </div>
 
@@ -491,7 +491,7 @@
                 <div class="card-head"><h3>Technology stack</h3></div>
                 <div class="chip-cloud">
                   <span class="chip">Flask</span><span class="chip">Python 3</span><span class="chip">pypdf</span>
-                  <span class="chip">Vanilla JS</span><span class="chip">Server-Sent Events</span><span class="chip">SQLite</span><span class="chip">OpenAI Responses API</span>
+                  <span class="chip">Vanilla JS</span><span class="chip">Server-Sent Events</span><span class="chip">SQLite / PostgreSQL</span><span class="chip">OpenAI Responses API</span>
                 </div>
               </div>
               <div class="card">

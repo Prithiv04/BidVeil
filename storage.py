@@ -1,4 +1,4 @@
-"""SQLite persistence and SHA-256 integrity checks for completed evaluations."""
+"""SQLite/PostgreSQL persistence and SHA-256 integrity checks."""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import psycopg
+from psycopg.rows import dict_row
+
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent / "instance" / "bidveil.sqlite3"
 
 
@@ -21,7 +24,14 @@ def database_path() -> Path:
     return Path(configured).expanduser().resolve() if configured else _DEFAULT_DB_PATH
 
 
-def _connect() -> sqlite3.Connection:
+def _use_postgres() -> bool:
+    return bool(os.environ.get("DATABASE_URL", "").strip())
+
+
+def _connect():
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if database_url:
+        return psycopg.connect(database_url, row_factory=dict_row, connect_timeout=10)
     path = database_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=15)
@@ -30,9 +40,44 @@ def _connect() -> sqlite3.Connection:
     return connection
 
 
+def _execute(connection, query: str, parameters=()):
+    """Execute shared SQL with the parameter marker expected by the driver."""
+    if _use_postgres():
+        query = query.replace("?", "%s")
+    return connection.execute(query, parameters)
+
+
 def initialize_database() -> None:
+    if _use_postgres():
+        with _connect() as connection:
+            _execute(connection,
+                """CREATE TABLE IF NOT EXISTS evaluations (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    tender_title TEXT NOT NULL,
+                    winner TEXT NOT NULL,
+                    evaluation_mode TEXT NOT NULL,
+                    average_score DOUBLE PRECISION NOT NULL,
+                    record_json TEXT NOT NULL,
+                    record_hash TEXT NOT NULL,
+                    sort_order BIGSERIAL UNIQUE NOT NULL
+                )"""
+            )
+            _execute(connection,
+                "ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS sort_order BIGSERIAL"
+            )
+            _execute(connection,
+                "ALTER TABLE evaluations ALTER COLUMN sort_order SET NOT NULL"
+            )
+            _execute(connection,
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_evaluations_sort_order ON evaluations(sort_order)"
+            )
+            _execute(connection,
+                "CREATE INDEX IF NOT EXISTS idx_evaluations_created_at ON evaluations(created_at DESC)"
+            )
+        return
     with _connect() as connection:
-        connection.execute(
+        _execute(connection,
             """
             CREATE TABLE IF NOT EXISTS evaluations (
                 id TEXT PRIMARY KEY,
@@ -46,7 +91,7 @@ def initialize_database() -> None:
             )
             """
         )
-        connection.execute(
+        _execute(connection,
             "CREATE INDEX IF NOT EXISTS idx_evaluations_created_at ON evaluations(created_at DESC)"
         )
 
@@ -89,6 +134,7 @@ def save_evaluation(result: dict[str, Any]) -> dict[str, Any]:
             "vendorIndex": document.get("vendorIndex"),
             "fileName": document.get("fileName"),
             "sha256": document.get("sha256"),
+            "storagePath": document.get("storagePath"),
         }
         for document in persisted_result.get("documents", [])
         if isinstance(document, dict) and document.get("sha256")
@@ -107,7 +153,7 @@ def save_evaluation(result: dict[str, Any]) -> dict[str, Any]:
     mode = str(persisted_result.get("evaluationMode") or "ai")
 
     with _connect() as connection:
-        connection.execute(
+        _execute(connection,
             """INSERT INTO evaluations
                (id, created_at, tender_title, winner, evaluation_mode, average_score, record_json, record_hash)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -131,10 +177,11 @@ def save_evaluation(result: dict[str, Any]) -> dict[str, Any]:
 def list_evaluations(limit: int = 100) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 500))
     with _connect() as connection:
-        rows = connection.execute(
+        order_column = "sort_order" if _use_postgres() else "rowid"
+        rows = _execute(connection,
             """SELECT id, created_at, tender_title, winner, evaluation_mode,
                       average_score, record_hash, record_json
-               FROM evaluations ORDER BY created_at DESC, rowid DESC LIMIT ?""",
+               FROM evaluations ORDER BY created_at DESC, """ + order_column + " DESC LIMIT ?",
             (safe_limit,),
         ).fetchall()
     return [
@@ -154,7 +201,7 @@ def list_evaluations(limit: int = 100) -> list[dict[str, Any]]:
 
 def get_evaluation(record_id: str) -> dict[str, Any] | None:
     with _connect() as connection:
-        row = connection.execute(
+        row = _execute(connection,
             "SELECT record_json, record_hash FROM evaluations WHERE id = ?", (record_id,)
         ).fetchone()
     if row is None:
@@ -182,7 +229,7 @@ def get_evaluation(record_id: str) -> dict[str, Any] | None:
 
 def verify_evaluation(record_id: str) -> dict[str, Any] | None:
     with _connect() as connection:
-        row = connection.execute(
+        row = _execute(connection,
             "SELECT record_json, record_hash FROM evaluations WHERE id = ?", (record_id,)
         ).fetchone()
     if row is None:
@@ -205,7 +252,7 @@ def verify_evaluation(record_id: str) -> dict[str, Any] | None:
 def verify_document_hashes(record_id: str, supplied_documents: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Compare re-uploaded document bytes with hashes protected by the record hash."""
     with _connect() as connection:
-        row = connection.execute(
+        row = _execute(connection,
             "SELECT record_json, record_hash FROM evaluations WHERE id = ?", (record_id,)
         ).fetchone()
     if row is None:
@@ -259,7 +306,7 @@ def verify_document_hashes(record_id: str, supplied_documents: list[dict[str, An
 def check_database_health() -> bool:
     try:
         with _connect() as connection:
-            connection.execute("SELECT 1").fetchone()
+            _execute(connection, "SELECT 1").fetchone()
         return True
-    except (OSError, sqlite3.Error):
+    except (OSError, sqlite3.Error, psycopg.Error):
         return False

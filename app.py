@@ -16,6 +16,7 @@ from pypdf import PdfReader
 from werkzeug.datastructures import FileStorage
 
 import inference
+import document_store
 import criteria
 import storage
 import sam_gov
@@ -555,6 +556,8 @@ def extract_uploaded_document(
         "status": "extracted",
         "characters": len(text),
         "sha256": hashlib.sha256(data).hexdigest(),
+        "_tempPath": str(saved_path),
+        "_contentType": upload.mimetype or ("application/pdf" if extension == ".pdf" else "text/plain"),
     }
 
 
@@ -704,6 +707,15 @@ def process_evaluation(
                 external = external_data_by_vendor.get(vendor.get("vendorName"))
                 if external is not None:
                     vendor["externalData"] = external
+            for document in document_statuses:
+                temp_path = document.pop("_tempPath", None)
+                content_type = document.pop("_contentType", "application/octet-stream")
+                if temp_path and os.environ.get("DATABASE_URL", "").strip() and document_store.is_configured():
+                    document["storagePath"] = document_store.upload_document(
+                        Path(temp_path).read_bytes(), document["fileName"], content_type
+                    )
+                elif temp_path and os.environ.get("DATABASE_URL", "").strip():
+                    raise RuntimeError("Supabase document storage must be configured for hosted evaluations.")
     except DocumentInputError as error:
         failure = str(error)
         document_statuses = error.documents
@@ -718,6 +730,20 @@ def process_evaluation(
         response_status = 502
         emit("verification_unavailable", "Failed / verification unavailable")
     finally:
+        for document in document_statuses:
+            document.pop("_tempPath", None)
+            document.pop("_contentType", None)
+        if failure:
+            for document in document_statuses:
+                object_path = document.get("storagePath")
+                if object_path:
+                    try:
+                        document_store.delete_document(object_path)
+                        document.pop("storagePath", None)
+                    except Exception:
+                        upload_cleanup_completed = False
+                        failure = "Evaluation failed and a private source document could not be cleaned up."
+                        response_status = 500
         payload_bids = payload.get("bids")
         if isinstance(payload_bids, list):
             for bid in payload_bids:
@@ -767,9 +793,24 @@ def process_evaluation(
     result["privacy"]["temporaryStorage"] = (
         "The request-scoped temporary directory was removed before this response."
     )
+    if os.environ.get("DATABASE_URL", "").strip() and document_store.is_configured():
+        result["privacy"]["originalDocumentStorage"] = (
+            "Original uploaded files are retained in the configured private Supabase Storage bucket."
+        )
+        result["privacy"]["serverSideRetention"] = (
+            "Original files are retained in private Supabase Storage. Extracted proposal text, prompts, and raw provider responses are not persisted. Derived evaluation results and SHA-256 hashes are stored in PostgreSQL."
+        )
     try:
         storage.save_evaluation(result)
     except Exception:
+        for document in document_statuses:
+            object_path = document.get("storagePath")
+            if object_path:
+                try:
+                    document_store.delete_document(object_path)
+                    document.pop("storagePath", None)
+                except Exception:
+                    pass
         return {
             "error": "Evaluation completed but could not be saved to the records database.",
             "documents": document_statuses,
@@ -797,10 +838,12 @@ def workspace():
 def healthcheck():
     database_available = storage.check_database_health()
     ai_status = inference.check_provider_health()
+    document_storage_status = document_store.check_health()
     response = {
-        "status": "ok" if database_available and ai_status.get("available") else "degraded",
+        "status": "ok" if database_available and ai_status.get("available") and document_storage_status.get("available") else "degraded",
         "backend": {"available": True},
         "database": {"available": database_available},
+        "documentStorage": document_storage_status,
         "inferenceProvider": ai_status,
         "externalSources": {
             "samGov": {
